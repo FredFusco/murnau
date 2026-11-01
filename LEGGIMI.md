@@ -78,6 +78,16 @@ All'avvio, al massimo una volta al giorno, Murnau controlla se ci sono versioni 
 
 Se ne trova, mostra l'elenco e chiede cosa installare: **Aggiorna**, **Più tardi** o **Salta questa versione**. Il controllo automatico si può spegnere (**Controlla all'avvio**) e si può sempre lanciare a mano con **Aggiornamenti…** o dal menu Aiuto. Durante un'analisi non si aggiorna. I file sostituiti dagli aggiornamenti dell'app vengono conservati, per poter tornare indietro.
 
+## Pubblicare una nuova versione
+
+Il codice è su GitHub in [FredFusco/murnau](https://github.com/FredFusco/murnau) (pubblico: solo il programma, mai film o risultati, grazie a `.gitignore`). Per pubblicare una versione, dopo il commit:
+
+```bash
+~/.venvs/descrittore/bin/python prepara_aggiornamento.py 1.1.0 "Novità uno" "Novità due" --pubblica
+```
+
+Crea il pacchetto e l'annuncio in `dist/` e li carica come release: le copie di Murnau li vedono al controllo successivo, con le novità elencate.
+
 ## Da riga di comando
 
 ```bash
