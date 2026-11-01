@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Murnau</title>
+<link rel="icon" href="/icona.png">
+<style>
+:root {
+  --fondo: #f3f1ec; --fondo-2: #e8e5dd; --pannello: #ffffff; --inchiostro: #1c1c21; --tenue: #6c6b72;
+  --linea: #dcd8cf; --accento: #c8372d; --accento-2: #a82c23; --ok: #2f7d4f; --avviso: #a8741a;
+  --c-troupe: #d23b30; --c-riflessi: #b0389a; --c-sguardi: #b8860b; --c-lavalier: #178a9a; --c-prese_cavi: #2f62c4;
+  --ombra: 0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.06);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fondo: #141418; --fondo-2: #1c1c22; --pannello: #1f1f26; --inchiostro: #ecebe6; --tenue: #9d9ca6;
+    --linea: #33333d; --accento: #ff5f52; --accento-2: #ff7d72; --ok: #6fcf94; --avviso: #e5b45a;
+    --c-troupe: #ff6a5e; --c-riflessi: #e070cb; --c-sguardi: #e3b341; --c-lavalier: #4fc3d4; --c-prese_cavi: #6f9cff;
+    --ombra: 0 8px 28px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--fondo); color: var(--inchiostro); font: 14.5px/1.5 -apple-system, "Helvetica Neue", system-ui, sans-serif; }
+button { font: inherit; cursor: pointer; }
+header { border-bottom: 1px solid var(--linea); background: var(--fondo-2); }
+.testata { max-width: 1180px; margin: 0 auto; padding: 14px 16px 0; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.testata img { width: 44px; height: 44px; border-radius: 10px; }
+.titolo { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.sottotitolo { margin: 0; color: var(--tenue); font-size: 13px; }
+nav { display: flex; gap: 4px; align-self: flex-end; width: 100%; }
+nav button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 14px; color: var(--tenue); font-weight: 600; }
+nav button.attivo { color: var(--inchiostro); border-color: var(--accento); }
+nav .conta { background: var(--accento); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 12px; margin-left: 4px; }
+nav .in-corso { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accento); margin-left: 6px; vertical-align: 2px; animation: pulsa 1.2s infinite; }
+@keyframes pulsa { 50% { opacity: .25; } }
+/* sessione */
+.sessione { margin-left: auto; display: flex; gap: 6px; align-items: center; position: relative; flex-wrap: wrap; }
+.sessione label { font-size: 12px; color: var(--tenue); }
+.sessione input { font: 600 14px/1.2 -apple-system, system-ui, sans-serif; padding: 5px 8px; width: 230px; max-width: 50vw;
+  background: var(--pannello); color: var(--inchiostro); border: 1px solid var(--linea); border-radius: 8px; }
+.esito-sessione { font-size: 12px; color: var(--ok); min-width: 4em; }
+@media (max-width: 900px) { .sessione { margin-left: 0; width: 100%; } }
+.elenco-sessioni { position: absolute; right: 0; top: calc(100% + 6px); width: min(440px, 92vw); max-height: 380px; overflow: auto;
+  background: var(--pannello); border: 1px solid var(--linea); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.25); z-index: 20; }
+.riga-sessione { display: flex; border-bottom: 1px solid var(--linea); }
+.riga-sessione:last-child { border-bottom: 0; }
+.riga-sessione > button { background: none; border: 0; text-align: left; padding: 9px 12px; color: var(--inchiostro); }
+.riga-sessione > button:first-child { flex: 1; min-width: 0; }
+.riga-sessione > button:first-child:hover { background: var(--fondo-2); }
+.riga-sessione > button.attuale { box-shadow: inset 3px 0 0 var(--accento); }
+.riga-sessione .n { font-weight: 600; display: block; }
+.riga-sessione .d { display: block; font-size: 12px; color: var(--tenue); }
+.riga-sessione button.elimina { flex: none; font-size: 12px; color: var(--tenue); }
+.riga-sessione button.elimina:hover { color: var(--accento); }
+.conferma-elimina { padding: 10px 12px; display: grid; gap: 6px; width: 100%; background: var(--fondo); }
+.conferma-elimina .n { font-weight: 600; }
+.conferma-elimina .d { font-size: 12px; color: var(--tenue); }
+.conferma-elimina .spunta { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; }
+.conferma-elimina .spunta input { margin-top: 3px; }
+.bottone.pericolo { background: var(--accento); border-color: var(--accento); color: #fff; }
+main { max-width: 1180px; margin: 0 auto; padding: 16px 16px 60px; }
+h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); }
+.pannello { background: var(--pannello); border: 1px solid var(--linea); border-radius: 12px; padding: 16px; box-shadow: var(--ombra); margin-bottom: 16px; }
+.griglia { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.spiega { color: var(--tenue); margin: 0 0 14px; font-size: 13.5px; max-width: 80ch; }
+/* riga di stato */
+.riga-stato { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.prerequisiti { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--tenue); }
+.pallino-stato { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--avviso); vertical-align: 1px; }
+.pallino-stato.ok { background: var(--ok); }
+.riga-stato .strumenti-app { margin-left: auto; display: flex; gap: 8px; }
+/* materiali: riquadri di trascinamento */
+.zone { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 760px) { .zone { grid-template-columns: 1fr; } }
+.zona { border: 1.5px dashed var(--linea); border-radius: 12px; padding: 14px; min-height: 190px; display: flex; flex-direction: column; gap: 10px; background: var(--fondo); transition: border-color .15s, background .15s; }
+.zona.piena { border-style: solid; background: var(--pannello); }
+body.trascinando .zona { border-color: var(--accento); border-style: dashed; background: color-mix(in srgb, var(--accento) 7%, var(--fondo)); }
+.zona-testa h3 { margin: 0; font-size: 18px; font-weight: 700; }
+.zona-testa span { font-size: 12.5px; color: var(--tenue); }
+.zona .invito { margin-top: auto; text-align: center; color: var(--tenue); font-size: 14px; padding: 16px 6px; }
+.zona.piena .invito { padding: 4px; font-size: 13px; }
+.zona .invito .bottone { margin-top: 6px; }
+.elementi { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.elemento { border: 1px solid var(--linea); border-radius: 8px; padding: 9px 11px; background: var(--fondo); }
+.elemento.mancante { border-color: var(--accento); }
+.elemento .ruolo { font-size: 12px; color: var(--accento); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.nome-file { display: block; font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.elemento .dettaglio, .scartato .dettaglio { font-size: 12.5px; color: var(--tenue); }
+.elemento .uso { font-size: 12.5px; margin-top: 2px; }
+.avviso-file { font-size: 12.5px; color: var(--accento); margin-top: 3px; }
+.controlli { display: flex; gap: 6px; margin-top: 7px; align-items: center; }
+.mancanti { font-size: 12.5px; color: var(--avviso); }
+.esito-arrivo { font-size: 13.5px; margin-top: 12px; min-height: 1.4em; color: var(--ok); }
+.esito-arrivo.attesa { color: var(--avviso); }
+.scartati { display: grid; gap: 8px; margin-top: 8px; }
+.scartato { border: 1px dashed var(--accento); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
+.opzioni-materiali { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 20px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--linea); font-size: 13.5px; }
+.opzioni-materiali > div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.opzioni-materiali .etichetta { color: var(--tenue); }
+.opzioni-materiali input[type=text] { width: 150px; padding: 5px 8px; border: 1px solid var(--linea); border-radius: 7px; background: var(--fondo); color: var(--inchiostro); font: 13.5px var(--mono); }
+.percorso { font: 12.5px/1.3 var(--mono); overflow-wrap: anywhere; min-width: 0; }
+.percorso.vuoto { font-family: inherit; color: var(--tenue); font-style: italic; }
+.bottone { background: var(--fondo-2); border: 1px solid var(--linea); color: var(--inchiostro); border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
+.bottone:hover { border-color: var(--tenue); }
+.bottone:disabled { opacity: .4; cursor: default; }
+.bottone.principale { background: var(--accento); border-color: var(--accento); color: #fff; font-weight: 600; padding: 10px 22px; font-size: 15px; }
+.bottone.principale:hover { background: var(--accento-2); }
+.bottone.piccolo { padding: 3px 9px; font-size: 13px; }
+/* categorie */
+.categoria { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; }
+.categoria input { margin-top: 4px; accent-color: var(--accento); width: 16px; height: 16px; }
+.categoria .pallino, .chip .pallino { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 6px; background: var(--c); }
+.categoria b { display: block; }
+.categoria small { color: var(--tenue); }
+.precisione { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.precisione label { flex: 1; min-width: 200px; border: 1px solid var(--linea); border-radius: 10px; padding: 10px; cursor: pointer; }
+.precisione label:has(input:checked) { border-color: var(--accento); background: color-mix(in srgb, var(--accento) 7%, transparent); }
+.precisione input { accent-color: var(--accento); }
+.precisione small { display: block; color: var(--tenue); margin-left: 22px; }
+.azioni { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.avviso { color: var(--avviso); }
+.errore { color: var(--accento); }
+/* avanzamento */
+.fasi { display: grid; gap: 8px; margin-top: 12px; }
+.fase { display: grid; grid-template-columns: 170px 1fr 150px; gap: 12px; align-items: center; color: var(--tenue); }
+.fase.corrente { color: var(--inchiostro); font-weight: 600; }
+.fase.fatta { color: var(--ok); }
+.barra { height: 6px; background: var(--fondo-2); border-radius: 3px; overflow: hidden; }
+.barra div { height: 100%; background: var(--accento); width: 0; transition: width .4s; }
+.fase.fatta .barra div { background: var(--ok); }
+.fase .eta { font-size: 12.5px; text-align: right; font-weight: 400; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--tenue); }
+pre { background: var(--fondo); border: 1px solid var(--linea); border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; }
+/* segnalazioni */
+.strumenti { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.chip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--linea); background: var(--pannello); border-radius: 16px; padding: 4px 11px; color: var(--inchiostro); }
+.chip .pallino { margin-top: 0; }
+.chip.spento { opacity: .4; }
+.chip span.n { color: var(--tenue); font-size: 12.5px; }
+select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--linea); background: var(--pannello); color: var(--inchiostro); }
+.controlli select { font-size: 12.5px; padding: 3px 6px; }
+.spazio { flex: 1; }
+.riepilogo { color: var(--tenue); margin: 0 0 14px; }
+.scheda { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr) minmax(0, 1.9fr); gap: 14px; background: var(--pannello);
+  border: 1px solid var(--linea); border-left: 5px solid var(--c); border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: var(--ombra); }
+.scheda.falso { opacity: .45; }
+.scheda img { width: 100%; display: block; border-radius: 7px; cursor: zoom-in; background: #000; }
+.scheda .dettaglio { max-height: 240px; object-fit: contain; }
+.scheda .tc { font: 600 19px/1.2 var(--mono); margin: 0; }
+.scheda .dove { color: var(--tenue); font-size: 12.5px; margin: 2px 0 8px; }
+.scheda .cat { color: var(--c); font-weight: 700; margin: 0 0 4px; }
+.scheda .descr { margin: 0 0 8px; }
+.scheda .clip { color: var(--tenue); font-size: 12.5px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.giudizio { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.giudizio button { border: 1px solid var(--linea); background: var(--fondo); color: var(--inchiostro); border-radius: 8px; padding: 5px 10px; }
+.giudizio button.si.scelto { background: var(--ok); border-color: var(--ok); color: #fff; }
+.giudizio button.no.scelto { background: var(--tenue); border-color: var(--tenue); color: #fff; }
+textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; border: 1px solid var(--linea); border-radius: 8px; background: var(--fondo); color: var(--inchiostro); font: 13.5px/1.4 -apple-system, system-ui, sans-serif; }
+.vuoto { text-align: center; color: var(--tenue); padding: 60px 20px; }
+.troupe { --c: var(--c-troupe); } .riflessi { --c: var(--c-riflessi); } .sguardi { --c: var(--c-sguardi); }
+.lavalier { --c: var(--c-lavalier); } .prese_cavi { --c: var(--c-prese_cavi); }
+/* finestre di dialogo */
+.velo { position: fixed; inset: 0; background: rgba(10, 10, 14, .55); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.foglio { background: var(--pannello); border: 1px solid var(--linea); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); width: min(580px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+.foglio-testa { padding: 18px 22px 4px; border-bottom: 1px solid var(--linea); }
+.foglio-testa h2 { text-transform: none; letter-spacing: 0; font-size: 20px; color: var(--inchiostro); margin: 0 0 6px; }
+.foglio-corpo { padding: 4px 22px 18px; overflow: auto; flex: 1; }
+.foglio-piede { display: flex; gap: 10px; justify-content: flex-end; align-items: center; padding: 12px 22px; border-top: 1px solid var(--linea); flex-wrap: wrap; }
+.voce { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--linea); cursor: pointer; }
+.voce:last-child { border-bottom: 0; }
+.voce input { margin-top: 4px; accent-color: var(--accento); }
+.voce b { font-size: 15px; }
+.voce .spiega { margin: 2px 0 0; }
+.voce ul { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; color: var(--tenue); }
+.voce .versioni { font: 12.5px var(--mono); color: var(--tenue); }
+.voce .peso { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gruppo-agg { font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); margin: 14px 0 0; }
+.agg-avanzamento { margin-top: 12px; font-size: 13px; color: var(--tenue); }
+.agg-automatico, .pulizia-totale { font-size: 13px; color: var(--tenue); margin-right: auto; display: flex; gap: 6px; align-items: center; }
+/* ingrandimento */
+#lente { position: fixed; inset: 0; background: rgba(0,0,0,.88); display: flex; align-items: center; justify-content: center; z-index: 60; cursor: zoom-out; }
+#lente img { max-width: 96vw; max-height: 92vh; }
+@media (max-width: 820px) {
+  .scheda { grid-template-columns: 1fr; }
+  .fase { grid-template-columns: 110px 1fr; } .fase .eta { grid-column: 1 / -1; text-align: left; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="testata">
+    <img src="/icona.png" alt="">
+    <div>
+      <h1 class="titolo">Murnau</h1>
+      <p class="sottotitolo">Cerca boom, troupe, riflessi, sguardi in macchina, lavalier, prese e cavi. Tutto su questo Mac.</p>
+    </div>
+    <div class="sessione">
+      <label for="nome-sessione">Sessione</label>
+      <input id="nome-sessione" spellcheck="false" aria-label="Nome della sessione">
+      <button class="bottone piccolo" id="salva-sessione">Salva</button>
+      <button class="bottone piccolo" id="nuova-sessione">Nuova</button>
+      <button class="bottone piccolo" id="apri-sessione" aria-haspopup="true" aria-expanded="false">Apri…</button>
+      <span class="esito-sessione" id="esito-sessione"></span>
+      <div class="elenco-sessioni" id="elenco-sessioni" hidden></div>
+    </div>
+    <nav>
+      <button data-vista="analisi" class="attivo">Analisi<span class="in-corso" id="in-corso" hidden></span></button>
+      <button data-vista="segnalazioni">Segnalazioni<span class="conta" id="conta-tab" hidden></span></button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section id="vista-analisi">
+  <div class="riga-stato">
+    <div class="prerequisiti" id="prerequisiti"></div>
+    <span class="strumenti-app">
+      <button class="bottone piccolo" data-comando="aggiornamenti">Aggiornamenti…</button>
+      <button class="bottone piccolo" data-comando="pulizia">Libera spazio…</button>
+    </span>
+  </div>
+
+  <div class="pannello">
+    <h2>Materiali</h2>
+    <p class="spiega">Trascina qui lo scarico del film e l'EDL o l'AAF della sequenza, anche insieme o in una cartella: Murnau riconosce da solo cosa sono. Serve solo il film. I file non vengono copiati né inviati da nessuna parte.</p>
+    <div class="zone">
+      <div class="zona" data-zona="video">
+        <div class="zona-testa"><h3>Film</h3><span>lo scarico dell'Avid: .mov, .mxf, .mp4</span></div>
+        <ul class="elementi"></ul>
+        <div class="invito">Trascina qui il film<br><button class="bottone piccolo" data-sfoglia="file">oppure scegli il file…</button></div>
+        <div class="mancanti"></div>
+      </div>
+      <div class="zona" data-zona="montaggio">
+        <div class="zona-testa"><h3>Montaggio</h3><span>l'EDL (CMX3600) o l'AAF della sequenza</span></div>
+        <ul class="elementi"></ul>
+        <div class="invito">Trascina qui l'EDL o l'AAF<br><button class="bottone piccolo" data-sfoglia="file">scegli il file…</button> <button class="bottone piccolo" data-sfoglia="cartella">una cartella…</button></div>
+        <div class="mancanti"></div>
+      </div>
+    </div>
+    <div class="esito-arrivo" id="esito-arrivo" aria-live="polite"></div>
+    <div class="scartati" id="scartati"></div>
+    <div class="opzioni-materiali">
+      <div><span class="etichetta">Timecode di inizio</span> <input type="text" id="tc-inizio" placeholder="dal file"> <span class="etichetta" style="font-size:12px">solo se il film non lo dichiara</span></div>
+      <div><span class="etichetta">I risultati vanno in</span> <span class="percorso" id="percorso-out"></span> <button class="bottone piccolo" id="cambia-out">Cambia…</button></div>
+    </div>
+  </div>
+
+  <div class="griglia">
+    <div class="pannello">
+      <h2>Cosa cercare</h2>
+      <div id="categorie"></div>
+    </div>
+    <div class="pannello">
+      <h2>Precisione</h2>
+      <div class="precisione">
+        <label><input type="radio" name="precisione" value="normale"> <b>Normale</b>
+          <small>Qwen3-VL esamina 1–4 fotogrammi per inquadratura; oggetti e volti uno al secondo. Circa 3–5 ore per un lungometraggio.</small></label>
+        <label><input type="radio" name="precisione" value="accurata"> <b>Accurata</b>
+          <small>Qwen3-VL esamina un fotogramma ogni 2 secondi. Trova di più ciò che compare per poco, ma richiede circa il triplo del tempo.</small></label>
+      </div>
+      <p class="sottotitolo" style="margin-top:12px">Se fermi l'analisi o chiudi l'app, rilanciandola riprende da dove era arrivata.</p>
+    </div>
+  </div>
+
+  <div class="pannello">
+    <div class="azioni">
+      <button class="bottone principale" id="avvia" data-comando="analizza">Analizza il film</button>
+      <button class="bottone" id="ferma" hidden>Ferma</button>
+      <span id="esito-avvio" class="errore"></span>
+    </div>
+    <div class="fasi" id="fasi" hidden></div>
+    <details id="dettagli" hidden><summary>Dettagli dell'elaborazione</summary><pre id="log"></pre></details>
+  </div>
+</section>
+
+<section id="vista-segnalazioni" hidden>
+  <div class="strumenti">
+    <div id="filtri-cat" style="display:contents"></div>
+    <select id="filtro-stato">
+      <option value="tutte">Tutte</option>
+      <option value="da">Da rivedere</option>
+      <option value="confermato">Confermate</option>
+      <option value="falso">Falsi allarmi</option>
+    </select>
+    <span class="spazio"></span>
+    <button class="bottone" data-comando="avid" title="Mostra il file nel Finder: in Media Composer, finestra Markers › Import Markers">Marker per Avid</button>
+    <button class="bottone" data-comando="resolve" title="In Resolve: Timeline › Importa › Marker della timeline da EDL">Marker per Resolve</button>
+    <button class="bottone" data-comando="report">Report</button>
+    <button class="bottone" data-comando="csv">Foglio di calcolo</button>
+    <button class="bottone" data-comando="cartella">Cartella</button>
+  </div>
+  <p class="riepilogo" id="riepilogo"></p>
+  <p class="errore" id="esito-esporta"></p>
+  <div id="schede"></div>
+</section>
+</main>
+
+<!-- Libera spazio -->
+<div class="velo" id="finestra-pulizia" hidden role="dialog" aria-modal="true" aria-labelledby="titolo-pulizia">
+  <div class="foglio">
+    <div class="foglio-testa">
+      <h2 id="titolo-pulizia">Libera spazio</h2>
+      <p class="spiega">File temporanei e di cache creati da Murnau. Film, montaggi, segnalazioni, revisioni e sessioni non vengono toccati.</p>
+    </div>
+    <div class="foglio-corpo"><div id="pulizia-voci"></div></div>
+    <div class="foglio-piede">
+      <span class="pulizia-totale" id="pulizia-totale"></span>
+      <button class="bottone" id="pulizia-annulla">Annulla</button>
+      <button class="bottone principale" id="pulizia-cancella">Cancella</button>
+    </div>
+  </div>
+</div>
+
+<!-- Aggiornamenti -->
+<div class="velo" id="finestra-aggiornamenti" hidden role="dialog" aria-modal="true" aria-labelledby="titolo-aggiornamenti">
+  <div class="foglio">
+    <div class="foglio-testa">
+      <h2 id="titolo-aggiornamenti">Aggiornamenti</h2>
+      <p class="spiega" id="agg-spiega"></p>
+    </div>
+    <div class="foglio-corpo">
+      <div id="agg-voci"></div>
+      <div class="agg-avanzamento" id="agg-avanzamento" hidden><div id="agg-fase"></div><div class="barra"><div id="agg-barra"></div></div></div>
+    </div>
+    <div class="foglio-piede">
+      <label class="agg-automatico"><input type="checkbox" id="agg-automatico"> Controlla all'avvio</label>
+      <button class="bottone" id="agg-salta" hidden>Salta questa versione</button>
+      <button class="bottone" id="agg-annulla">Più tardi</button>
+      <button class="bottone principale" id="agg-installa">Aggiorna</button>
+    </div>
+  </div>
+</div>
+
+<div id="lente" hidden><img alt=""></div>
+
+<script>
+const FASI = [["preparazione", "Preparazione"], ["fotogrammi", "Fotogrammi"], ["oggetti", "Oggetti (OWLv2)"],
+              ["volti", "Volti e sguardi"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti"]];
+const DESCRIZIONI = {
+  troupe: "Boom, macchina da presa, stativi, luci da set, operatori e troupe in campo",
+  riflessi: "Troupe e attrezzatura riflesse in specchi, vetri, occhiali, carrozzerie",
+  sguardi: "Attori e comparse che guardano nell'obiettivo",
+  lavalier: "Radiomicrofoni e fili visibili sugli attori",
+  prese_cavi: "Prese elettriche e cavi a terra o sulle pareti",
+};
+// Ruoli dei materiali: nome, a cosa serve, riquadro, cosa succede se manca.
+const RUOLI = {
+  video: ["Film", "le immagini da controllare, inquadratura per inquadratura", "video", "Manca il film: è l'unico materiale indispensabile."],
+  montaggio: ["Montaggio", "i tagli esatti e il nome della clip di ogni segnalazione", "montaggio", "Senza EDL o AAF i tagli vengono rilevati automaticamente."],
+};
+let stato = null, progetto = {}, mancanti = [], dati = {segnalazioni: [], revisione: {}}, catSpente = new Set(), firmaDati = "", firmaMateriali = "";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+function crea(tag, cls, t) { const e = document.createElement(tag); if (cls) e.className = cls; if (t !== undefined) e.textContent = t; return e; }
+function testo(el, t) { el.textContent = t; return el; }
+
+async function api(percorso, corpo) {
+  const r = await fetch(percorso, corpo === undefined ? {} : {method: "POST", body: JSON.stringify(corpo)});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.errore || "errore");
+  return j;
+}
+
+function durata(s) {
+  if (s == null) return "";
+  s = Math.round(s);
+  if (s < 60) return `${s} s`;
+  const h = Math.floor(s / 3600), m = Math.round(s % 3600 / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+
+function mostraVista(v) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("attivo", b.dataset.vista === v));
+  $("#vista-analisi").hidden = v !== "analisi";
+  $("#vista-segnalazioni").hidden = v !== "segnalazioni";
+  try { localStorage.setItem("murnau-vista", v); } catch {}
+  if (v === "segnalazioni") caricaSegnalazioni();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => mostraVista(b.dataset.vista));
+
+/* ---------- sessioni ---------- */
+function esitoSessione(t) { testo($("#esito-sessione"), t); setTimeout(() => testo($("#esito-sessione"), ""), 2500); }
+async function cambiaSessione(corpo) {
+  try { caricaSessione((await api("/api/sessione", corpo)).progetto); return true; }
+  catch (e) { alert(e.message); return false; }
+}
+function caricaSessione(p) {
+  progetto = p;
+  $("#nome-sessione").value = p.nome || "";
+  firmaDati = ""; firmaMateriali = "";
+  dati = {segnalazioni: [], revisione: {}};
+  disegnaProgetto(); disegnaSegnalazioni(); aggiorna(); caricaSegnalazioni();
+}
+$("#salva-sessione").onclick = async () => {
+  if (await cambiaSessione({azione: "salva", nome: $("#nome-sessione").value})) esitoSessione("Salvata ✓");
+};
+$("#nome-sessione").onkeydown = e => { if (e.key === "Enter") $("#salva-sessione").click(); };
+$("#nuova-sessione").onclick = async () => {
+  if (await cambiaSessione({azione: "nuova"})) { mostraVista("analisi"); $("#nome-sessione").select(); esitoSessione("Nuova sessione"); }
+};
+$("#apri-sessione").onclick = async e => {
+  e.stopPropagation();
+  const box = $("#elenco-sessioni");
+  if (!box.hidden) { box.hidden = true; return; }
+  const {corrente, sessioni} = await api("/api/sessioni");
+  box.replaceChildren();
+  for (const s of sessioni) {
+    const riga = crea("div", "riga-sessione");
+    const b = crea("button", s.id === corrente ? "attuale" : "");
+    const info = [s.video || "nessun film", s.segnalazioni == null ? "" : `${s.segnalazioni} segnalazioni`, s.modificata].filter(Boolean).join(" · ");
+    b.append(crea("span", "n", s.nome || "Senza nome"), crea("span", "d", info));
+    b.onclick = async () => { box.hidden = true; if (s.id !== corrente && await cambiaSessione({azione: "apri", id: s.id})) esitoSessione("Aperta"); };
+    const x = crea("button", "elimina", "Elimina");
+    x.setAttribute("aria-label", "Elimina la sessione " + (s.nome || ""));
+    x.onclick = e => { e.stopPropagation(); confermaElimina(riga, s); };
+    riga.append(b, x);
+    box.appendChild(riga);
+  }
+  box.hidden = false;
+  $("#apri-sessione").setAttribute("aria-expanded", "true");
+};
+function confermaElimina(riga, s) {
+  // Conferma dentro l'elenco: il film e il montaggio restano dove sono, i risultati solo se scelto.
+  const box = crea("div", "conferma-elimina");
+  box.append(crea("div", "n", `Eliminare «${s.nome || "Senza nome"}»?`),
+    crea("div", "d", "La sessione sparisce da Murnau. Il film e il montaggio originali restano dove sono."));
+  const spunta = crea("label", "spunta");
+  const cb = crea("input"); cb.type = "checkbox";
+  spunta.append(cb, document.createTextNode(s.segnalazioni != null
+    ? ` Sposta nel Cestino anche i risultati (${s.segnalazioni} segnalazioni, revisioni, marker, fotogrammi)`
+    : " Sposta nel Cestino anche i risultati di Murnau"));
+  const az = crea("div", "azioni");
+  const ok = crea("button", "bottone piccolo pericolo", "Elimina");
+  const no = crea("button", "bottone piccolo", "Annulla");
+  const esito = crea("div", "d");
+  az.append(ok, no);
+  box.append(spunta, az, esito);
+  riga.replaceChildren(box);
+  box.onclick = e => e.stopPropagation();
+  no.onclick = () => { $("#elenco-sessioni").hidden = true; $("#apri-sessione").click(); };
+  ok.onclick = async () => {
+    try {
+      const r = await api("/api/sessione", {azione: "elimina", id: s.id, risultati: cb.checked});
+      $("#elenco-sessioni").hidden = true;
+      caricaSessione(r.progetto);
+      esitoSessione(r.spostati && r.spostati.length ? "Eliminata, risultati nel Cestino" : "Eliminata");
+    } catch (err) { testo(esito, err.message); }
+  };
+}
+document.addEventListener("click", e => {
+  if (!$("#elenco-sessioni").contains(e.target) && e.target !== $("#apri-sessione")) {
+    $("#elenco-sessioni").hidden = true; $("#apri-sessione").setAttribute("aria-expanded", "false");
+  }
+});
+
+/* ---------- materiali ---------- */
+function nomeFile(p) { return p.split("/").filter(Boolean).pop(); }
+function disegnaProgetto() {
+  const p = progetto;
+  const firma = JSON.stringify([p.video, p.montaggio, p.scartati, p.out, p.info, mancanti]);
+  if (firma !== firmaMateriali) {
+    firmaMateriali = firma;
+    const info = p.info || {};
+    for (const zona of document.querySelectorAll(".zona")) {
+      const ruolo = zona.dataset.zona;
+      const lista = zona.querySelector(".elementi");
+      lista.replaceChildren();
+      if (p[ruolo]) {
+        const li = crea("li", "elemento");
+        li.title = p[ruolo];
+        li.append(crea("span", "ruolo", RUOLI[ruolo][0]), crea("span", "nome-file", nomeFile(p[ruolo])));
+        if (info[p[ruolo]]) li.appendChild(crea("div", "dettaglio", info[p[ruolo]]));
+        li.appendChild(crea("div", "uso", "Serve per " + RUOLI[ruolo][1] + "."));
+        if (mancanti.includes(p[ruolo])) {
+          li.classList.add("mancante");
+          li.appendChild(crea("div", "avviso-file", "File non trovato: è stato spostato o il disco non è collegato. Trascinalo di nuovo."));
+        }
+        li.appendChild(controlliRuolo(p[ruolo], ruolo));
+        lista.appendChild(li);
+      }
+      zona.classList.toggle("piena", !!p[ruolo]);
+      zona.querySelector(".invito").firstChild.textContent = p[ruolo] ? "Trascina un altro file per sostituirlo" : (ruolo === "video" ? "Trascina qui il film" : "Trascina qui l'EDL o l'AAF");
+      zona.querySelector(".mancanti").textContent = p[ruolo] ? "" : RUOLI[ruolo][3];
+    }
+    const sc = $("#scartati");
+    sc.replaceChildren();
+    for (const x of p.scartati || []) {
+      const d = crea("div", "scartato");
+      d.append(crea("span", "nome-file", x.nome || nomeFile(x.percorso)), crea("span", "dettaglio", x.problema || "Non riconosciuto."), controlliRuolo(x.percorso, ""));
+      sc.appendChild(d);
+    }
+    const out = $("#percorso-out");
+    out.textContent = p.out || "verrà proposta accanto al film";
+    out.classList.toggle("vuoto", !p.out);
+  }
+  if (document.activeElement !== $("#tc-inizio")) $("#tc-inizio").value = p.tc_inizio || "";
+  if (document.activeElement !== $("#nome-sessione")) $("#nome-sessione").value = p.nome || "";
+  document.querySelectorAll("input[name=precisione]").forEach(r => r.checked = (r.value === "accurata") === !!p.accurato);
+  document.querySelectorAll("#categorie input").forEach(c => c.checked = (p.categorie || []).includes(c.value));
+}
+function controlliRuolo(percorso, ruolo) {
+  // Per correggere un riconoscimento sbagliato: "usa come…" e togli.
+  const box = crea("div", "controlli");
+  const sel = crea("select");
+  sel.setAttribute("aria-label", "Usa " + nomeFile(percorso) + " come");
+  sel.appendChild(new Option("Usa come…", ""));
+  for (const [r, v] of Object.entries(RUOLI)) if (r !== ruolo) sel.appendChild(new Option(v[0], r));
+  sel.onchange = () => cambiaRuolo(percorso, sel.value);
+  const x = crea("button", "bottone piccolo", "Togli");
+  x.onclick = () => cambiaRuolo(percorso, "");
+  box.append(sel, x);
+  return box;
+}
+async function cambiaRuolo(percorso, ruolo) {
+  progetto = (await api("/api/ruolo", {percorso, ruolo})).progetto;
+  disegnaProgetto();
+}
+function materialiInArrivo(n) {
+  document.body.classList.remove("trascinando");
+  testo($("#esito-arrivo"), `Riconosco ${n === 1 ? "il file" : n + " file"}…`);
+  $("#esito-arrivo").className = "esito-arrivo attesa";
+  mostraVista("analisi");
+}
+async function materialiAggiunti(esiti) {
+  const presi = esiti.filter(e => e.ruolo), scartati = esiti.filter(e => !e.ruolo);
+  const nomi = {video: "film", montaggio: "montaggio", risultati: "analisi già fatta"};
+  const parti = [];
+  if (presi.length) parti.push(presi.map(e => `${e.nome} → ${nomi[e.ruolo]}`).join(" · "));
+  if (scartati.length) parti.push(`${scartati.length} non ${scartati.length === 1 ? "usato" : "usati"}: vedi sotto`);
+  testo($("#esito-arrivo"), parti.join("  —  ") || "Nessun file da aggiungere.");
+  $("#esito-arrivo").className = "esito-arrivo";
+  await aggiorna();
+  if (presi.some(e => e.ruolo === "risultati")) { firmaDati = ""; mostraVista("segnalazioni"); }
+}
+document.querySelectorAll("[data-sfoglia]").forEach(b => b.onclick = async () => {
+  try {
+    const r = await api("/api/sfoglia", {tipo: b.dataset.sfoglia});
+    if (r.esiti.length) materialiAggiunti(r.esiti);
+  } catch (e) { testo($("#esito-arrivo"), e.message); }
+});
+$("#cambia-out").onclick = async () => {
+  progetto = (await api("/api/cartella-risultati", {})).progetto;
+  firmaDati = ""; disegnaProgetto(); caricaSegnalazioni();
+};
+$("#tc-inizio").onchange = e => api("/api/progetto", {tc_inizio: e.target.value});
+document.querySelectorAll("input[name=precisione]").forEach(r => r.onchange = () => api("/api/progetto", {accurato: r.value === "accurata"}));
+// Evidenzia i riquadri mentre si trascina un file sulla finestra.
+let contaTrascina = 0;
+document.addEventListener("dragenter", e => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { contaTrascina++; document.body.classList.add("trascinando"); } });
+document.addEventListener("dragleave", () => { if (--contaTrascina <= 0) { contaTrascina = 0; document.body.classList.remove("trascinando"); } });
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => { e.preventDefault(); contaTrascina = 0; document.body.classList.remove("trascinando"); });
+
+/* ---------- cosa cercare, avanzamento ---------- */
+function disegnaCategorie(cat) {
+  $("#categorie").innerHTML = Object.entries(cat).map(([k, t]) => `
+    <label class="categoria ${k}"><input type="checkbox" value="${k}"><span class="pallino"></span>
+      <span><b>${esc(t)}</b><small>${esc(DESCRIZIONI[k] || "")}</small></span></label>`).join("");
+  document.querySelectorAll("#categorie input").forEach(c => c.onchange = () =>
+    api("/api/progetto", {categorie: [...document.querySelectorAll("#categorie input:checked")].map(x => x.value)}));
+}
+
+function disegnaLavoro(l) {
+  // Il lavoro in corso riguarda la sua sessione: nelle altre si vede solo che è occupato.
+  const qui = !l.sessione || l.sessione === progetto.id;
+  $("#avvia").hidden = l.attivo;
+  $("#ferma").hidden = !l.attivo;
+  $("#in-corso").hidden = !l.attivo;
+  const iniziato = qui && (l.attivo || l.codice !== null);
+  $("#fasi").hidden = !iniziato;
+  $("#dettagli").hidden = !iniziato;
+  if (l.attivo && !qui) testo($("#esito-avvio"), "C'è un'analisi in corso in un'altra sessione.");
+  if (!iniziato) return;
+  const indice = FASI.findIndex(f => f[0] === l.fase);
+  const finito = l.fase === "fine";
+  $("#fasi").innerHTML = FASI.map(([k, nome], i) => {
+    const a = l.avanzamento[k];
+    const fatta = finito || (indice > i && indice >= 0);
+    const corrente = !finito && i === indice;
+    let perc = fatta ? 100 : a ? 100 * a.fatti / Math.max(1, a.totale) : 0;
+    let eta = fatta ? "fatto" : corrente ? (a ? `${a.fatti} di ${a.totale}${a.eta ? " · " + durata(a.eta) : ""}` : "in corso…") : "";
+    if (corrente && !l.attivo) eta = l.codice === 0 ? "" : "interrotta";
+    return `<div class="fase ${fatta ? "fatta" : ""} ${corrente ? "corrente" : ""}"><span>${nome}</span>
+      <div class="barra"><div style="width:${perc}%"></div></div><span class="eta">${eta}</span></div>`;
+  }).join("");
+  const pre = $("#log"), giu = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 5;
+  pre.textContent = l.log.join("\n");
+  if (giu) pre.scrollTop = pre.scrollHeight;
+  if (!l.attivo && l.codice && l.codice > 0) {
+    testo($("#esito-avvio"), "L'analisi si è interrotta: " + (l.log.slice(-1)[0] || "errore sconosciuto"));
+    $("#dettagli").open = true;
+  }
+}
+
+function disegnaPrerequisiti(s) {
+  const voce = (ok, si, no) => `<span><span class="pallino-stato ${ok ? "ok" : ""}"></span>${ok ? si : no}</span>`;
+  $("#prerequisiti").innerHTML = voce(s.ollama, "Ollama acceso", "Ollama spento: verrà avviato all'inizio dell'analisi") +
+    voce(s.modello, "Qwen3-VL pronto", "Manca il modello Qwen3-VL");
+}
+
+async function aggiorna() {
+  try {
+    const s = await api("/api/stato");
+    const prima = stato;
+    stato = s;
+    if (!prima) disegnaCategorie(s.categorie);
+    if (prima && prima.progetto.id !== s.progetto.id) firmaDati = "";
+    progetto = s.progetto; mancanti = s.mancanti;
+    disegnaProgetto();
+    disegnaLavoro(s.lavoro);
+    disegnaPrerequisiti(s);
+    if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden)) caricaSegnalazioni();
+    if (prima && prima.lavoro.attivo && !s.lavoro.attivo && s.lavoro.codice === 0 && s.lavoro.sessione === progetto.id) mostraVista("segnalazioni");
+  } catch (e) { /* il server si sta chiudendo */ }
+}
+
+/* ---------- comandi (pulsanti e menu della barra di macOS) ---------- */
+async function murnauComando(nome) {
+  const clic = sel => { const b = $(sel); if (b && !b.disabled) b.click(); };
+  try {
+    switch (nome) {
+      case "nuova": return clic("#nuova-sessione");
+      case "apri": if ($("#elenco-sessioni").hidden) clic("#apri-sessione"); return;
+      case "salva": return clic("#salva-sessione");
+      case "elimina": {
+        if ($("#elenco-sessioni").hidden) $("#apri-sessione").click();
+        await new Promise(r => setTimeout(r, 400));
+        const riga = [...document.querySelectorAll(".riga-sessione")].find(x => x.querySelector(".attuale"));
+        if (riga) riga.querySelector(".elimina").click();
+        return;
+      }
+      case "aggiungi-file": mostraVista("analisi"); return clic('[data-sfoglia="file"]');
+      case "aggiungi-cartella": mostraVista("analisi"); return clic('[data-sfoglia="cartella"]');
+      case "report": case "avid": case "resolve": case "csv": case "cartella":
+        testo($("#esito-esporta"), "");
+        await api("/api/apri", {cosa: nome}); return;
+      case "vista-analisi": return mostraVista("analisi");
+      case "vista-segnalazioni": return mostraVista("segnalazioni");
+      case "dettagli": mostraVista("analisi"); $("#dettagli").open = true; return;
+      case "aggiornamenti": return cercaAggiornamenti(true);
+      case "pulizia": return apriPulizia();
+      case "analizza":
+        mostraVista("analisi"); testo($("#esito-avvio"), "");
+        await api("/api/avvia", {}); return aggiorna();
+      case "ferma": await api("/api/ferma", {}); return aggiorna();
+    }
+  } catch (e) {
+    if (["report", "avid", "resolve", "csv", "cartella"].includes(nome) && !$("#vista-segnalazioni").hidden) testo($("#esito-esporta"), e.message);
+    else { mostraVista("analisi"); testo($("#esito-avvio"), e.message); }
+  }
+}
+document.querySelectorAll("[data-comando]").forEach(b => b.onclick = () => murnauComando(b.dataset.comando));
+$("#ferma").onclick = () => murnauComando("ferma");
+
+/* ---------- segnalazioni ---------- */
+async function caricaSegnalazioni() {
+  const d = await api("/api/segnalazioni");
+  const firma = JSON.stringify(d);
+  if (firma === firmaDati) return;
+  firmaDati = firma;
+  dati = d;
+  disegnaSegnalazioni();
+}
+
+function statoDi(s) { return dati.revisione[s.id] || "da"; }
+
+function disegnaSegnalazioni() {
+  const tutte = dati.segnalazioni;
+  const valide = tutte.filter(s => statoDi(s) !== "falso");
+  $("#conta-tab").hidden = !valide.length;
+  $("#conta-tab").textContent = valide.length;
+  const cat = stato ? stato.categorie : {};
+  $("#filtri-cat").innerHTML = Object.entries(cat).filter(([k]) => tutte.some(s => s.categoria === k)).map(([k, t]) =>
+    `<button class="chip ${k} ${catSpente.has(k) ? "spento" : ""}" data-cat="${k}"><span class="pallino"></span>${esc(t)}
+     <span class="n">${valide.filter(s => s.categoria === k).length}</span></button>`).join("");
+  document.querySelectorAll("#filtri-cat .chip").forEach(c => c.onclick = () => {
+    catSpente.has(c.dataset.cat) ? catSpente.delete(c.dataset.cat) : catSpente.add(c.dataset.cat);
+    disegnaSegnalazioni();
+  });
+  const filtro = $("#filtro-stato").value;
+  const visibili = tutte.filter(s => !catSpente.has(s.categoria) && (filtro === "tutte" || statoDi(s) === filtro));
+  const conferme = tutte.filter(s => statoDi(s) === "confermato").length;
+  const falsi = tutte.filter(s => statoDi(s) === "falso").length;
+  $("#riepilogo").textContent = tutte.length
+    ? `${tutte.length} segnalazioni su ${dati.inquadrature} inquadrature · ${conferme} confermate, ${falsi} falsi allarmi, ${tutte.length - conferme - falsi} da rivedere. ` +
+      `I falsi allarmi vengono tolti dai marker e dal report.`
+    : "";
+  if (!tutte.length) {
+    $("#schede").innerHTML = `<div class="vuoto">${dati.creato ? "Nessuna segnalazione: l'analisi non ha trovato errori." : "Nessuna analisi ancora in questa sessione: scegli il film e avvia l'analisi."}</div>`;
+    return;
+  }
+  const url = p => "/file?p=" + encodeURIComponent(p);
+  $("#schede").innerHTML = visibili.map(s => {
+    const st = statoDi(s);
+    return `<article class="scheda ${s.categoria} ${st === "falso" ? "falso" : ""}" data-id="${s.id}">
+      <img src="${url(s.immagine)}" loading="lazy" alt="Fotogramma">
+      <img class="dettaglio" src="${url(s.dettaglio)}" loading="lazy" alt="Dettaglio">
+      <div>
+        <p class="tc">${esc(s.tc)}</p>
+        <p class="dove">inquadratura ${s.numero} · ${esc(s.tc_in)} – ${esc(s.tc_out)}</p>
+        <p class="cat">${esc(s.titolo)}</p>
+        <p class="descr">${esc(s.descrizione)}</p>
+        <p class="clip">${esc(s.scena || s.clip)} · certezza ${esc(s.certezza)} · sospetto in ${s.fotogrammi_sospetti} fotogrammi su ${s.fotogrammi_totali}</p>
+        <div class="giudizio">
+          <button class="si ${st === "confermato" ? "scelto" : ""}" data-stato="confermato">✓ Errore confermato</button>
+          <button class="no ${st === "falso" ? "scelto" : ""}" data-stato="falso">✕ Falso allarme</button>
+        </div>
+        <textarea placeholder="Nota (finisce nel marker)">${esc(dati.revisione["note:" + s.id] || "")}</textarea>
+      </div></article>`;
+  }).join("") || '<div class="vuoto">Nessuna segnalazione con questi filtri.</div>';
+  document.querySelectorAll(".scheda").forEach(el => {
+    const id = el.dataset.id;
+    el.querySelectorAll(".giudizio button").forEach(b => b.onclick = async () => {
+      const nuovo = statoDi({id}) === b.dataset.stato ? "" : b.dataset.stato;
+      if (nuovo) dati.revisione[id] = nuovo; else delete dati.revisione[id];
+      disegnaSegnalazioni();
+      await api("/api/rivedi", {id, stato: nuovo});
+    });
+    el.querySelector("textarea").onchange = async e => {
+      dati.revisione["note:" + id] = e.target.value;
+      await api("/api/rivedi", {id, nota: e.target.value});
+    };
+    el.querySelectorAll("img").forEach(img => img.onclick = () => { $("#lente img").src = img.src; $("#lente").hidden = false; });
+  });
+}
+$("#filtro-stato").onchange = disegnaSegnalazioni;
+$("#lente").onclick = () => $("#lente").hidden = true;
+
+/* ---------- aggiornamenti ---------- */
+const GRUPPI_AGG = {app: "Murnau", programma: "Programmi", libreria: "Librerie Python", modello: "Modelli di intelligenza artificiale"};
+let offerta = null, aggInCorso = false, aggAutomatico = true;
+function chiudiAggiornamenti() { if (!aggInCorso) $("#finestra-aggiornamenti").hidden = true; }
+async function cercaAggiornamenti(manuale) {
+  // All'avvio la finestra compare solo se c'è qualcosa da aggiornare; dal menu sempre.
+  if (manuale) {
+    mostraAggiornamenti("Cerco aggiornamenti di Murnau, dei programmi, delle librerie e dei modelli… (può richiedere un minuto)", []);
+    $("#agg-installa").disabled = true;
+  }
+  let r;
+  try { r = await api("/api/aggiornamenti", {azione: "controlla", manuale}); }
+  catch (e) { if (manuale) mostraAggiornamenti(e.message, []); return; }
+  if (r.da_fare === false) return;
+  offerta = r;
+  if (!r.voci.length && !manuale) return;
+  let spiega;
+  if (r.voci.length) spiega = r.voci.length === 1 ? "È disponibile un aggiornamento. Vuoi installarlo?" : `Sono disponibili ${r.voci.length} aggiornamenti. Vuoi installarli?`;
+  else spiega = `È tutto aggiornato: Murnau ${r.versione}, programmi, librerie e modelli.`;
+  if (!r.configurato) spiega += " (Gli aggiornamenti di Murnau stesso non sono ancora pubblicati online: si controllano programmi, librerie e modelli.)";
+  if (r.errori.length) spiega += " Non sono riuscito a controllare: " + r.errori.join("; ") + ".";
+  mostraAggiornamenti(spiega, r.voci);
+  $("#agg-salta").hidden = manuale || !r.voci.length;
+}
+function mostraAggiornamenti(spiega, voci) {
+  testo($("#agg-spiega"), spiega);
+  const box = $("#agg-voci"); box.replaceChildren();
+  for (const [gruppo, titolo] of Object.entries(GRUPPI_AGG)) {
+    const delGruppo = voci.filter(v => v.gruppo === gruppo);
+    if (!delGruppo.length) continue;
+    box.appendChild(crea("div", "gruppo-agg", titolo));
+    for (const v of delGruppo) {
+      const riga = crea("label", "voce");
+      const c = crea("input"); c.type = "checkbox"; c.checked = true; c.dataset.chiave = v.chiave; c.onchange = statoAggiornamenti;
+      const d = crea("div");
+      d.append(crea("b", "", v.nome), " ", crea("span", "versioni", `${v.attuale} → ${v.nuova}`));
+      if (v.descrizione) d.appendChild(crea("div", "spiega", v.descrizione));
+      if (v.novita && v.novita.length) { const ul = crea("ul"); v.novita.forEach(n => ul.appendChild(crea("li", "", n))); d.appendChild(ul); }
+      riga.append(c, d); box.appendChild(riga);
+    }
+  }
+  $("#agg-avanzamento").hidden = true;
+  $("#agg-installa").textContent = voci.length ? "Aggiorna" : "OK";
+  $("#agg-installa").dataset.modo = voci.length ? "installa" : "chiudi";
+  $("#agg-installa").disabled = false;
+  $("#agg-annulla").hidden = !voci.length; $("#agg-annulla").textContent = "Più tardi";
+  $("#agg-salta").hidden = true;
+  $("#agg-automatico").checked = aggAutomatico;
+  $("#finestra-aggiornamenti").hidden = false;
+  statoAggiornamenti();
+}
+function sceltiAggiornamenti() {
+  const chiavi = new Set([...document.querySelectorAll("#agg-voci input:checked")].map(c => c.dataset.chiave));
+  return (offerta?.voci || []).filter(v => chiavi.has(v.chiave));
+}
+function statoAggiornamenti() {
+  $("#agg-installa").disabled = $("#agg-installa").dataset.modo === "installa" && !sceltiAggiornamenti().length;
+}
+api("/api/aggiornamenti").then(r => aggAutomatico = r.automatico).catch(() => {});
+$("#agg-automatico").onchange = e => { aggAutomatico = e.target.checked; api("/api/aggiornamenti", {azione: "automatico", valore: aggAutomatico}); };
+$("#agg-annulla").onclick = chiudiAggiornamenti;
+$("#agg-salta").onclick = async () => { await api("/api/aggiornamenti", {azione: "salta", voci: offerta.voci}); chiudiAggiornamenti(); };
+$("#agg-installa").onclick = async () => {
+  const modo = $("#agg-installa").dataset.modo;
+  if (modo === "chiudi") return chiudiAggiornamenti();
+  if (modo === "riavvia") { testo($("#agg-fase"), "Riavvio Murnau…"); await api("/api/aggiornamenti", {azione: "riavvia"}); return; }
+  try { await api("/api/aggiornamenti", {azione: "installa", voci: sceltiAggiornamenti()}); }
+  catch (e) { testo($("#agg-spiega"), e.message); return; }
+  aggInCorso = true;
+  document.querySelectorAll("#agg-voci input, #agg-installa, #agg-annulla, #agg-salta").forEach(b => b.disabled = true);
+  $("#agg-avanzamento").hidden = false;
+  seguiAggiornamento();
+};
+async function seguiAggiornamento() {
+  const {installazione: i} = await api("/api/aggiornamenti");
+  testo($("#agg-fase"), i.fase + (i.totale ? ` · ${i.fatti.toLocaleString("it-IT")} di ${i.totale.toLocaleString("it-IT")}` : ""));
+  $("#agg-barra").style.width = i.totale ? (100 * i.fatti / i.totale) + "%" : "0";
+  if (i.attiva) return setTimeout(seguiAggiornamento, 700);
+  aggInCorso = false;
+  const b = $("#agg-installa"); b.disabled = false; $("#agg-annulla").disabled = false;
+  $("#agg-avanzamento").hidden = true;
+  let msg = i.riusciti.length ? "Aggiornati: " + i.riusciti.join(", ") + "." : "";
+  if (i.falliti.length) msg += (msg ? " " : "") + "Non riusciti: " + i.falliti.join("; ") + ". Il resto è rimasto com'era.";
+  if (i.riavvia) {
+    testo($("#agg-spiega"), msg + " Riavvia Murnau per usare la versione nuova: la sessione resta com'è.");
+    b.textContent = "Riavvia Murnau"; b.dataset.modo = "riavvia";
+  } else {
+    testo($("#agg-spiega"), msg);
+    b.textContent = "OK"; b.dataset.modo = "chiudi"; $("#agg-annulla").hidden = true;
+  }
+  aggiorna();
+}
+
+/* ---------- libera spazio ---------- */
+function peso(byte) {
+  if (byte >= 2 ** 30) return (byte / 2 ** 30).toLocaleString("it-IT", {maximumFractionDigits: 1}) + " GB";
+  if (byte >= 2 ** 20) return Math.round(byte / 2 ** 20).toLocaleString("it-IT") + " MB";
+  return Math.max(1, Math.round(byte / 1024)) + " KB";
+}
+let vociPulizia = [];
+async function apriPulizia() {
+  $("#finestra-pulizia").hidden = false;
+  testo($("#pulizia-totale"), "Misuro lo spazio occupato…");
+  $("#pulizia-voci").replaceChildren(); $("#pulizia-cancella").disabled = true;
+  $("#pulizia-cancella").textContent = "Cancella"; $("#pulizia-cancella").dataset.modo = "cancella";
+  $("#pulizia-annulla").hidden = false;
+  try { vociPulizia = (await api("/api/pulizia")).voci; } catch (e) { testo($("#pulizia-totale"), e.message); return; }
+  const box = $("#pulizia-voci");
+  if (!vociPulizia.length) box.appendChild(crea("p", "spiega", "Non c'è niente da cancellare."));
+  for (const v of vociPulizia) {
+    const riga = crea("label", "voce");
+    const c = crea("input"); c.type = "checkbox"; c.checked = v.consigliata; c.dataset.chiave = v.chiave; c.onchange = totalePulizia;
+    const d = crea("div"); d.append(crea("b", "", v.nome), crea("div", "spiega", v.spiega));
+    riga.append(c, d, crea("span", "peso", peso(v.byte))); box.appendChild(riga);
+  }
+  totalePulizia();
+}
+function totalePulizia() {
+  const scelte = [...document.querySelectorAll("#pulizia-voci input:checked")].map(c => c.dataset.chiave);
+  const byte = vociPulizia.filter(v => scelte.includes(v.chiave)).reduce((a, v) => a + v.byte, 0);
+  testo($("#pulizia-totale"), scelte.length ? `Libererai ${peso(byte)}` : "");
+  $("#pulizia-cancella").disabled = !scelte.length;
+}
+function chiudiPulizia() { $("#finestra-pulizia").hidden = true; }
+$("#pulizia-annulla").onclick = chiudiPulizia;
+$("#pulizia-cancella").onclick = async () => {
+  const b = $("#pulizia-cancella");
+  if (b.dataset.modo === "chiudi") return chiudiPulizia();
+  const chiavi = [...document.querySelectorAll("#pulizia-voci input:checked")].map(c => c.dataset.chiave);
+  b.disabled = true; testo($("#pulizia-totale"), "Cancello…");
+  try {
+    const r = await api("/api/pulizia", {chiavi});
+    testo($("#pulizia-totale"), `Fatto: liberati ${peso(r.liberati)}.`);
+    $("#pulizia-voci").replaceChildren();
+    b.textContent = "OK"; b.dataset.modo = "chiudi"; $("#pulizia-annulla").hidden = true;
+  } catch (e) { testo($("#pulizia-totale"), e.message); }
+  b.disabled = false;
+};
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  $("#lente").hidden = true;
+  if (!$("#finestra-aggiornamenti").hidden) chiudiAggiornamenti();
+  if (!$("#finestra-pulizia").hidden) chiudiPulizia();
+  $("#elenco-sessioni").hidden = true;
+});
+
+try { const v = localStorage.getItem("murnau-vista"); if (v) mostraVista(v); } catch {}
+aggiorna().then(() => { $("#nome-sessione").value = progetto.nome || ""; setTimeout(() => cercaAggiornamenti(false), 3000); });
+setInterval(aggiorna, 1500);
+</script>
+</body>
+</html>

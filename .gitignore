@@ -1,0 +1,19 @@
+# Su GitHub va SOLO il programma Murnau. Si esclude tutto e si ammettono soltanto
+# i tipi di file del programma: così un film, un EDL, un AAF o le segnalazioni di un
+# film finiti per sbaglio in questa cartella non vengono mai pubblicati.
+*
+!*/
+!.gitignore
+!*.py
+!interfaccia.html
+!LEGGIMI.md
+!VERSIONE
+!aggiornamenti.json
+!icona_murnau.png
+!icona/icona_murnau.svg
+!Murnau.app/**
+# Mai, nemmeno se dentro ci fossero file ammessi:
+prova_risultati/
+dist/
+__pycache__/
+.DS_Store

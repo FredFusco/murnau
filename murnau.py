@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""Murnau: cerca gli errori di ripresa in un film montato.
+
+Analizza lo scarico di un film (con l'EDL o l'AAF della sequenza, o rilevando i
+tagli da solo) e segnala, inquadratura per inquadratura:
+  - troupe o attrezzatura in campo (boom, macchina da presa, stativi, operatori)
+  - troupe nei riflessi (specchi, vetri, occhiali, carrozzerie)
+  - attori e comparse che guardano in macchina
+  - microfoni lavalier visibili
+  - prese elettriche e cavi
+
+Tutto avviene su questo computer: OWLv2 e YuNet trovano i sospetti, Qwen3-VL
+(tramite Ollama) esamina i fotogrammi e verifica ogni sospetto su un ritaglio
+ingrandito.
+
+    python murnau.py FILM.mov --montaggio FILM.aaf --out risultati
+"""
+
+import argparse
+import json
+import math
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import esporta
+import montaggio
+import rilevatori
+from rilevatori import CATEGORIE
+
+LARGHEZZA = 1280           # pixel dei fotogrammi analizzati
+MAX_VERIFICHE = 3          # sospetti verificati al massimo per inquadratura e categoria
+
+
+def fase(nome: str) -> None:
+    print(f"@@fase {nome}", flush=True)
+
+
+def avanzamento(nome: str, fatti: int, totale: int) -> None:
+    if totale <= 200 or fatti % max(1, totale // 200) == 0 or fatti == totale:
+        print(f"@@avanz {nome} {fatti} {totale}", flush=True)
+
+
+class Archivio:
+    """Risultati già calcolati, in un file JSONL: permette di riprendere un'analisi interrotta."""
+
+    def __init__(self, percorso: Path):
+        self.percorso = percorso
+        self.dati = {}
+        if percorso.exists():
+            for riga in percorso.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(riga)
+                    self.dati[r["k"]] = r["v"]
+                except (ValueError, KeyError):
+                    pass  # riga troncata da un'interruzione
+
+    def __contains__(self, k):
+        return k in self.dati
+
+    def __getitem__(self, k):
+        return self.dati[k]
+
+    def metti(self, k: str, v) -> None:
+        self.dati[k] = v
+        with self.percorso.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"k": k, "v": v}, ensure_ascii=False) + "\n")
+
+
+# --------------------------------------------------------------------------
+# Fotogrammi
+# --------------------------------------------------------------------------
+
+def estrai_fotogrammi(video: Path, inquadrature: list, cartella: Path, passo: float,
+                      ritaglio: str, fps: float) -> dict:
+    """Un fotogramma ogni `passo` secondi, in un solo passaggio sul film.
+
+    Restituisce {numero inquadratura: [(secondi, percorso)]}. I fotogrammi a ridosso
+    dei tagli vengono scartati; le inquadrature più brevi del passo ricevono il loro
+    fotogramma centrale.
+    """
+    inizio = max(0.0, math.floor(min(q.inizio for q in inquadrature) / passo) * passo)
+    fine = max(q.fine for q in inquadrature)
+    filtri = (f"{ritaglio}," if ritaglio else "") + f"fps=1/{passo},scale={LARGHEZZA}:-2"
+    completo = cartella / ".completo"
+    firma = json.dumps({"inizio": inizio, "fine": fine, "passo": passo, "filtri": filtri})
+    if not completo.exists() or completo.read_text() != firma:
+        shutil.rmtree(cartella, ignore_errors=True)
+        cartella.mkdir(parents=True)
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
+               "-ss", f"{inizio:.3f}", "-to", f"{fine:.3f}", "-i", str(video), "-an", "-sn",
+               "-vf", filtri, "-q:v", "3", "-start_number", "0", str(cartella / "f%06d.jpg")]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        totale = round(fine - inizio)
+        for riga in proc.stdout:
+            m = re.match(r"out_time_us=(\d+)", riga)
+            if m:
+                avanzamento("fotogrammi", min(totale, int(m.group(1)) // 1_000_000), totale)
+        if proc.wait() != 0:
+            sys.exit("ffmpeg non è riuscito a leggere il video.")
+        completo.write_text(firma)
+
+    margine = 1.5 / fps
+    per_inquadratura = {q.numero: [] for q in inquadrature}
+    tempi = sorted((inizio + int(p.stem[1:]) * passo, p) for p in cartella.glob("f*.jpg"))
+    i = 0
+    for q in inquadrature:
+        while i < len(tempi) and tempi[i][0] < q.inizio + margine:
+            i += 1
+        j = i
+        while j < len(tempi) and tempi[j][0] <= q.fine - margine:
+            per_inquadratura[q.numero].append(tempi[j])
+            j += 1
+        if not per_inquadratura[q.numero]:
+            t = (q.inizio + q.fine) / 2
+            dest = cartella / f"q{q.numero:05d}.jpg"
+            if not dest.exists():
+                subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(video),
+                                "-frames:v", "1", "-vf", (f"{ritaglio}," if ritaglio else "") + f"scale={LARGHEZZA}:-2",
+                                "-q:v", "3", "-y", str(dest)])
+            if dest.exists():
+                per_inquadratura[q.numero].append((t, dest))
+    return per_inquadratura
+
+
+def scegli_per_esame(fotogrammi: list, durata: float, accurato: bool) -> list:
+    """Fotogrammi da far esaminare a Qwen3-VL, distribuiti nell'inquadratura."""
+    if accurato:
+        n = min(12, max(1, math.ceil(durata / 2)))
+    else:
+        n = 1 if durata < 4 else 2 if durata < 10 else 3 if durata < 20 else 4
+    n = min(n, len(fotogrammi))
+    if n <= 0:
+        return []
+    if n == 1:
+        return [fotogrammi[len(fotogrammi) // 2]]
+    passo = (len(fotogrammi) - 1) / (n - 1)
+    return [fotogrammi[round(k * passo)] for k in range(n)]
+
+
+# --------------------------------------------------------------------------
+# Immagini per la verifica e per il report
+# --------------------------------------------------------------------------
+
+def _jpeg(cv2, img, qualita: int = 88) -> bytes:
+    return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, qualita])[1].tobytes()
+
+
+def immagini_sospetto(percorso: Path, riquadro, categoria: str) -> tuple:
+    """(fotogramma con il riquadro rosso, ritaglio ingrandito) come JPEG in memoria."""
+    import cv2
+    img = cv2.imread(str(percorso))
+    h, w = img.shape[:2]
+    x0, y0, x1, y1 = riquadro or (0, 0, 1, 1)
+    X0, Y0, X1, Y1 = int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)
+    segnato = img.copy()
+    spessore = max(2, w // 400)
+    cv2.rectangle(segnato, (X0, Y0), (X1, Y1), (40, 40, 230), spessore)
+    # Ritaglio: il riquadro allargato per dare contesto; per gli sguardi solo il volto.
+    allarga = 1.5 if categoria == "sguardi" else 2.0
+    minimo = 0.08 if categoria == "sguardi" else 0.22
+    cw = max((X1 - X0) * allarga, w * minimo)
+    ch = max((Y1 - Y0) * allarga, h * minimo)
+    if categoria == "sguardi":
+        cw = ch = max(cw, ch)
+    cx, cy = (X0 + X1) / 2, (Y0 + Y1) / 2
+    a0, b0 = int(max(0, cx - cw / 2)), int(max(0, cy - ch / 2))
+    a1, b1 = int(min(w, cx + cw / 2)), int(min(h, cy + ch / 2))
+    ritaglio = (img if categoria == "sguardi" else segnato)[b0:b1, a0:a1]
+    lato = 512 if categoria == "sguardi" else 768
+    scala = lato / max(ritaglio.shape[:2])
+    ritaglio = cv2.resize(ritaglio, None, fx=scala, fy=scala,
+                          interpolation=cv2.INTER_CUBIC if scala > 1 else cv2.INTER_AREA)
+    return _jpeg(cv2, segnato), _jpeg(cv2, ritaglio)
+
+
+def _sovrapposti(a, b) -> bool:
+    if not a or not b:
+        return False
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    unione = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return unione > 0 and inter / unione > 0.4
+
+
+# --------------------------------------------------------------------------
+# Programma principale
+# --------------------------------------------------------------------------
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Cerca gli errori di ripresa in un film montato, solo in locale.")
+    ap.add_argument("video", type=Path)
+    ap.add_argument("--montaggio", type=Path, help="EDL CMX3600 o AAF della sequenza (consigliato)")
+    ap.add_argument("--out", type=Path, default=Path("risultati_murnau"))
+    ap.add_argument("--categorie", default=",".join(CATEGORIE),
+                    help="categorie da cercare, separate da virgole: " + ", ".join(CATEGORIE))
+    ap.add_argument("--passo", type=float, default=1.0,
+                    help="secondi tra un fotogramma e l'altro per oggetti e volti (predefinito 1)")
+    ap.add_argument("--accurato", action="store_true",
+                    help="Qwen3-VL esamina un fotogramma ogni 2 secondi invece di 1-4 per inquadratura (più lento)")
+    ap.add_argument("--modello", default=rilevatori.MODELLO_PREDEFINITO)
+    ap.add_argument("--tc-inizio", help="timecode del primo fotogramma del video, se il file non lo dichiara")
+    ap.add_argument("--da", type=int, default=1, help="prima inquadratura da analizzare")
+    ap.add_argument("--a", type=int, help="ultima inquadratura da analizzare")
+    ap.add_argument("--soglia-tagli", type=float, default=0.3, help="sensibilità del rilevamento tagli senza montaggio")
+    args = ap.parse_args()
+
+    categorie = {c.strip() for c in args.categorie.split(",") if c.strip()}
+    sconosciute = categorie - set(CATEGORIE)
+    if sconosciute:
+        sys.exit(f"Categorie sconosciute: {', '.join(sconosciute)}")
+    if not args.video.exists():
+        sys.exit(f"Video non trovato: {args.video}")
+    out = args.out
+    lavoro = out / "lavoro"
+    lavoro.mkdir(parents=True, exist_ok=True)
+    (out / "segnalazioni").mkdir(exist_ok=True)
+
+    # 1. Inquadrature
+    fase("preparazione")
+    fps, durata, tc_file = montaggio.info_video(args.video)
+    tc_inizio = args.tc_inizio or tc_file or "00:00:00:00"
+    tc_inizio_s = montaggio.tc_a_secondi(tc_inizio, fps)
+    print(f"Video: {durata / 60:.1f} minuti a {fps:g} fps, inizia a {tc_inizio}")
+    if args.montaggio:
+        inquadrature = montaggio.leggi_montaggio(args.montaggio, fps, tc_inizio_s)
+        fuori = [q for q in inquadrature if q.inizio < -0.5 or q.fine > durata + 0.5]
+        if len(fuori) > len(inquadrature) / 2:
+            sys.exit(f"Il montaggio non corrisponde al video: {len(fuori)} inquadrature su {len(inquadrature)} cadono "
+                     f"fuori dal file. Controlla il timecode di inizio (ora {tc_inizio}).")
+        inquadrature = [q for q in inquadrature if q.fine > 0 and q.inizio < durata]
+        for q in inquadrature:
+            q.inizio, q.fine = max(0.0, q.inizio), min(durata, q.fine)
+    else:
+        print("Nessun EDL o AAF: rilevo i tagli con ffmpeg...")
+        inquadrature = montaggio.rileva_tagli(args.video, durata, fps, tc_inizio_s, args.soglia_tagli)
+    inquadrature = [q for q in inquadrature if q.numero >= args.da and (args.a is None or q.numero <= args.a)]
+    if not inquadrature:
+        sys.exit("Nessuna inquadratura da analizzare.")
+    print(f"{len(inquadrature)} inquadrature da analizzare")
+    ritaglio = montaggio.rileva_bande_nere(args.video, durata)
+    if ritaglio:
+        print(f"Bande nere: analizzo solo l'immagine ({ritaglio})")
+
+    # 2. Fotogrammi
+    fase("fotogrammi")
+    fotogrammi = estrai_fotogrammi(args.video, inquadrature, lavoro / "fotogrammi", args.passo, ritaglio, fps)
+    tutti = [p for q in inquadrature for _, p in fotogrammi[q.numero]]
+    print(f"{len(tutti)} fotogrammi estratti")
+
+    # 3. Oggetti (OWLv2)
+    oggetti = Archivio(lavoro / "oggetti.jsonl")
+    if categorie & {"troupe", "lavalier", "prese_cavi"}:
+        fase("oggetti")
+        da_fare = [p for p in tutti if p.name not in oggetti]
+        if da_fare:
+            print("Carico il rilevatore di oggetti (OWLv2)...")
+            rilevatore = rilevatori.Oggetti(categorie)
+            for n, p in enumerate(da_fare, 1):
+                oggetti.metti(p.name, rilevatore.cerca(p))
+                avanzamento("oggetti", n, len(da_fare))
+            del rilevatore
+
+    # 4. Volti frontali
+    volti = Archivio(lavoro / "sguardi.jsonl")
+    if "sguardi" in categorie:
+        fase("volti")
+        da_fare = [p for p in tutti if p.name not in volti]
+        if da_fare:
+            rilevatore = rilevatori.Volti()
+            for n, p in enumerate(da_fare, 1):
+                volti.metti(p.name, rilevatore.frontali(p))
+                avanzamento("volti", n, len(da_fare))
+
+    # 5. Esame dei fotogrammi con Qwen3-VL
+    rilevatori.avvia_ollama()
+    if not rilevatori.ollama_pronto(args.modello):
+        sys.exit(f"Ollama non è acceso o manca il modello {args.modello}.")
+    fase("esame")
+    esame = Archivio(lavoro / "esame.jsonl")
+    chiave_cat = ",".join(sorted(categorie))
+    da_esaminare = [p for q in inquadrature
+                    for _, p in scegli_per_esame(fotogrammi[q.numero], q.fine - q.inizio, args.accurato)]
+    for n, p in enumerate(da_esaminare, 1):
+        k = f"{p.name}|{chiave_cat}"
+        if k not in esame:
+            try:
+                esame.metti(k, rilevatori.esamina(args.modello, p, categorie))
+            except RuntimeError as e:
+                print(f"{p.name}: {e}")
+        avanzamento("esame", n, len(da_esaminare))
+
+    # 6. Verifica dei sospetti
+    fase("verifica")
+    verifiche = Archivio(lavoro / "verifiche.jsonl")
+    tempo_di = {p.name: t for q in inquadrature for t, p in fotogrammi[q.numero]}
+    segnalazioni = []
+    # Le immagini delle analisi precedenti non devono restare accanto alle nuove.
+    for vecchia in (out / "segnalazioni").glob("*.jpg"):
+        vecchia.unlink()
+
+    def segnalazione(q, cat, p, riquadro, segnato, dettaglio, campi) -> dict:
+        ident = f"{q.numero:05d}-{cat}"
+        (out / "segnalazioni" / f"{ident}.jpg").write_bytes(segnato)
+        (out / "segnalazioni" / f"{ident}_dettaglio.jpg").write_bytes(dettaglio)
+        t = tempo_di.get(p.name, (q.inizio + q.fine) / 2)
+        return {"id": ident, "numero": q.numero, "categoria": cat, "titolo": CATEGORIE[cat],
+                "fotogrammi_totali": len(fotogrammi[q.numero]), "riquadro": riquadro,
+                "tc": montaggio.secondi_a_tc(t + tc_inizio_s, fps), "secondi": round(t, 3),
+                "tc_in": q.tc_in, "tc_out": q.tc_out, "clip": q.clip, "scena": q.scena(),
+                "immagine": f"segnalazioni/{ident}.jpg", "dettaglio": f"segnalazioni/{ident}_dettaglio.jpg", **campi}
+
+    for indice, q in enumerate(inquadrature, 1):
+        avanzamento("verifica", indice, len(inquadrature))
+        foto = fotogrammi[q.numero]
+        for cat in (c for c in CATEGORIE if c in categorie):
+            sospetti = []   # (priorità, fotogramma, riquadro, origine, oggetto)
+            for _, p in foto:
+                for r in (esame[f"{p.name}|{chiave_cat}"] if f"{p.name}|{chiave_cat}" in esame else []):
+                    if r["categoria"] == cat:
+                        sospetti.append((0, p, r["riquadro"], "esame", r["voce"]))
+            if cat in ("troupe", "lavalier", "prese_cavi"):
+                trovati = [(r["punteggio"], p, r) for _, p in foto for r in (oggetti[p.name] if p.name in oggetti else [])
+                           if r["categoria"] == cat]
+                for punteggio, p, r in sorted(trovati, key=lambda x: -x[0]):
+                    sospetti.append((1 - punteggio, p, r["riquadro"], "oggetti", r["oggetto"]))
+            if cat == "sguardi":
+                # Misurati dal modello dello sguardo: nessuna verifica di Qwen3-VL.
+                trovati = sorted(((v["angolo"], p, v) for _, p in foto for v in (volti[p.name] if p.name in volti else [])
+                                  if v["angolo"] <= rilevatori.SOGLIA_SGUARDO), key=lambda x: x[0])
+                if trovati:
+                    angolo, p, v = trovati[0]
+                    segnato, dettaglio = immagini_sospetto(p, v["riquadro"], cat)
+                    segnalazioni.append(segnalazione(q, cat, p, v["riquadro"], segnato, dettaglio, {
+                        "descrizione": f"Sguardo a {angolo:.0f}° dall'obiettivo "
+                                       f"({v['orizzontale']:+.0f}° in orizzontale, {v['verticale']:+.0f}° in verticale).",
+                        "certezza": "alta" if angolo <= rilevatori.SGUARDO_CERTO else "media",
+                        "oggetto": "volto", "origine": "sguardo",
+                        "fotogrammi_sospetti": len({x[1].name for x in trovati})}))
+                continue
+            if not sospetti:
+                continue
+            sospetti.sort(key=lambda s: s[0])
+            visti = len({s[1].name for s in sospetti})
+            scartati, tentati = [], 0
+            for _, p, riquadro, origine, oggetto in sospetti:
+                if tentati >= MAX_VERIFICHE:
+                    break
+                if any(_sovrapposti(riquadro, s) for s in scartati):
+                    continue
+                if cat == "sguardi" and not riquadro:
+                    continue
+                tentati += 1
+                k = f"{p.name}|{cat}|{riquadro}"
+                segnato, dettaglio = immagini_sospetto(p, riquadro, cat)
+                if k not in verifiche:
+                    immagini = [dettaglio] if cat == "sguardi" else [segnato, dettaglio]
+                    try:
+                        verifiche.metti(k, rilevatori.verifica(args.modello, cat, immagini))
+                    except RuntimeError as e:
+                        print(f"Inquadratura {q.numero}: {e}")
+                        continue
+                v = verifiche[k]
+                if not v.get("errore"):
+                    scartati.append(riquadro)
+                    continue
+                segnalazioni.append(segnalazione(q, cat, p, riquadro, segnato, dettaglio, {
+                    "descrizione": v.get("cosa_vedo", ""), "certezza": v.get("certezza", "media"),
+                    "oggetto": v.get("classe") or oggetto, "origine": origine, "fotogrammi_sospetti": visti}))
+                break
+
+    dati = {"video": str(args.video), "montaggio": str(args.montaggio or ""), "fps": fps,
+            "tc_inizio": tc_inizio, "inquadrature": len(inquadrature), "categorie": sorted(categorie),
+            "creato": time.strftime("%Y-%m-%d %H:%M"), "segnalazioni": segnalazioni}
+    (out / "segnalazioni.json").write_text(json.dumps(dati, ensure_ascii=False, indent=1), encoding="utf-8")
+    esporta.tutto(out)
+    fase("fine")
+    conteggio = {CATEGORIE[c]: sum(1 for s in segnalazioni if s["categoria"] == c) for c in CATEGORIE if c in categorie}
+    print(f"Fatto: {len(segnalazioni)} segnalazioni su {len(inquadrature)} inquadrature. "
+          + "; ".join(f"{k}: {v}" for k, v in conteggio.items()))
+    print(f"Report: {out / 'report_murnau.html'}")
+
+
+if __name__ == "__main__":
+    main()

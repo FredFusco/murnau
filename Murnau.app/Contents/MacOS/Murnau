@@ -1,0 +1,9 @@
+#!/bin/bash
+# Avvia Murnau. Usa l'ambiente Python già installato sul Mac (torch, OpenCV, pywebview).
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export HF_HUB_DISABLE_TELEMETRY=1
+DATI="$HOME/Library/Application Support/Murnau"
+mkdir -p "$DATI"
+# La cartella che contiene Murnau.app è quella del programma.
+cd "$(dirname "$0")/../../.." || exit 1
+exec "$HOME/.venvs/descrittore/bin/python" app.py >> "$DATI/murnau.log" 2>&1
