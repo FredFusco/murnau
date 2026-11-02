@@ -44,6 +44,17 @@ def avanzamento(nome: str, fatti: int, totale: int) -> None:
         print(f"@@avanz {nome} {fatti} {totale}", flush=True)
 
 
+# Secondi stimati per unità di lavoro di ogni fase (M5 Max, Ollama libero): servono a pesare le
+# fasi nella percentuale complessiva la prima volta; poi l'app usa i tempi misurati nelle analisi
+# precedenti su questo Mac.
+COSTI = {"fotogrammi": .04, "oggetti": .6, "volti": .08, "modello": 45.0, "esame": 4.5, "verifica": 3.5}
+
+
+def piano(**unita) -> None:
+    """Annuncia all'app quanto lavoro resta in ogni fase, nell'ordine in cui verrà fatto."""
+    print("@@piano " + " ".join(f"{nome}={n}:{COSTI[nome]}" for nome, n in unita.items()), flush=True)
+
+
 class Archivio:
     """Risultati già calcolati, in un file JSONL: permette di riprendere un'analisi interrotta."""
 
@@ -245,6 +256,14 @@ def main() -> None:
     ritaglio = montaggio.rileva_bande_nere(args.video, durata)
     if ritaglio:
         print(f"Bande nere: analizzo solo l'immagine ({ritaglio})")
+    con_oggetti = bool(categorie & {"troupe", "lavalier", "prese_cavi"})
+    # Prima stima del lavoro, dalle durate: diventa esatta dopo l'estrazione dei fotogrammi.
+    secondi = round(sum(q.fine - q.inizio for q in inquadrature))
+    stimati = [max(1, round((q.fine - q.inizio) / args.passo)) for q in inquadrature]
+    esami = sum(len(scegli_per_esame([None] * n, q.fine - q.inizio, args.accurato)) for q, n in zip(inquadrature, stimati))
+    piano(fotogrammi=secondi, **({"oggetti": sum(stimati)} if con_oggetti else {}),
+          **({"volti": sum(stimati)} if "sguardi" in categorie else {}),
+          modello=0 if rilevatori.modello_caricato(args.modello) else 1, esame=esami, verifica=2 * len(inquadrature))
 
     # 2. Fotogrammi
     fase("fotogrammi")
@@ -252,11 +271,25 @@ def main() -> None:
     tutti = [p for q in inquadrature for _, p in fotogrammi[q.numero]]
     print(f"{len(tutti)} fotogrammi estratti")
 
-    # 3. Oggetti (OWLv2)
+    # Lavoro esatto che resta, al netto di quanto è già stato fatto in un'esecuzione precedente.
     oggetti = Archivio(lavoro / "oggetti.jsonl")
-    if categorie & {"troupe", "lavalier", "prese_cavi"}:
+    volti = Archivio(lavoro / "sguardi.jsonl")
+    esame = Archivio(lavoro / "esame.jsonl")
+    chiave_cat = ",".join(sorted(categorie))
+    da_esaminare = [p for q in inquadrature
+                    for _, p in scegli_per_esame(fotogrammi[q.numero], q.fine - q.inizio, args.accurato)
+                    if f"{p.name}|{chiave_cat}" not in esame]
+    oggetti_da_fare = [p for p in tutti if p.name not in oggetti] if con_oggetti else []
+    volti_da_fare = [p for p in tutti if p.name not in volti] if "sguardi" in categorie else []
+    piano(**({"oggetti": len(oggetti_da_fare)} if con_oggetti else {}),
+          **({"volti": len(volti_da_fare)} if "sguardi" in categorie else {}),
+          modello=0 if rilevatori.modello_caricato(args.modello) else 1,
+          esame=len(da_esaminare), verifica=2 * len(inquadrature))
+
+    # 3. Oggetti (OWLv2)
+    if con_oggetti:
         fase("oggetti")
-        da_fare = [p for p in tutti if p.name not in oggetti]
+        da_fare = oggetti_da_fare
         if da_fare:
             print("Carico il rilevatore di oggetti (OWLv2)...")
             rilevatore = rilevatori.Oggetti(categorie)
@@ -266,32 +299,44 @@ def main() -> None:
             del rilevatore
 
     # 4. Volti frontali
-    volti = Archivio(lavoro / "sguardi.jsonl")
     if "sguardi" in categorie:
         fase("volti")
-        da_fare = [p for p in tutti if p.name not in volti]
+        da_fare = volti_da_fare
         if da_fare:
             rilevatore = rilevatori.Volti()
             for n, p in enumerate(da_fare, 1):
                 volti.metti(p.name, rilevatore.frontali(p))
                 avanzamento("volti", n, len(da_fare))
 
+    # Ora i sospetti di OWLv2 sono noti: la stima delle verifiche diventa molto più precisa
+    # (una chiamata per sospetto, al massimo MAX_VERIFICHE per inquadratura e categoria, più
+    # quelli che troverà l'esame, circa uno ogni dieci fotogrammi esaminati).
+    da_owl = 0
+    for q in inquadrature:
+        per_cat = {}
+        for _, p in fotogrammi[q.numero]:
+            for r in (oggetti[p.name] if p.name in oggetti else []):
+                if r["categoria"] in categorie:
+                    per_cat[r["categoria"]] = per_cat.get(r["categoria"], 0) + 1
+        da_owl += sum(min(MAX_VERIFICHE, n) for n in per_cat.values())
+    piano(verifica=da_owl + round(.1 * len(da_esaminare)))
+
     # 5. Esame dei fotogrammi con Qwen3-VL
     rilevatori.avvia_ollama()
     if not rilevatori.ollama_pronto(args.modello):
         sys.exit(f"Ollama non è acceso o manca il modello {args.modello}.")
+    if not rilevatori.modello_caricato(args.modello):
+        # Il primo caricamento di Qwen3-VL in memoria richiede da mezzo minuto a un minuto e mezzo.
+        fase("modello")
+        rilevatori.carica_modello(args.modello)
+        avanzamento("modello", 1, 1)
     fase("esame")
-    esame = Archivio(lavoro / "esame.jsonl")
-    chiave_cat = ",".join(sorted(categorie))
-    da_esaminare = [p for q in inquadrature
-                    for _, p in scegli_per_esame(fotogrammi[q.numero], q.fine - q.inizio, args.accurato)]
+    # Solo i fotogrammi non ancora esaminati: così il tempo stimato misura il lavoro vero.
     for n, p in enumerate(da_esaminare, 1):
-        k = f"{p.name}|{chiave_cat}"
-        if k not in esame:
-            try:
-                esame.metti(k, rilevatori.esamina(args.modello, p, categorie))
-            except RuntimeError as e:
-                print(f"{p.name}: {e}")
+        try:
+            esame.metti(f"{p.name}|{chiave_cat}", rilevatori.esamina(args.modello, p, categorie))
+        except RuntimeError as e:
+            print(f"{p.name}: {e}")
         avanzamento("esame", n, len(da_esaminare))
 
     # 6. Verifica dei sospetti
@@ -314,20 +359,33 @@ def main() -> None:
                 "tc_in": q.tc_in, "tc_out": q.tc_out, "clip": q.clip, "scena": q.scena(),
                 "immagine": f"segnalazioni/{ident}.jpg", "dettaglio": f"segnalazioni/{ident}_dettaglio.jpg", **campi}
 
-    for indice, q in enumerate(inquadrature, 1):
-        avanzamento("verifica", indice, len(inquadrature))
+    def sospetti_di(q, cat) -> list:
+        """(priorità, fotogramma, riquadro, origine, oggetto) dei sospetti da verificare, i più probabili prima."""
+        foto = fotogrammi[q.numero]
+        sospetti = []
+        for _, p in foto:
+            for r in (esame[f"{p.name}|{chiave_cat}"] if f"{p.name}|{chiave_cat}" in esame else []):
+                if r["categoria"] == cat:
+                    sospetti.append((0, p, r["riquadro"], "esame", r["voce"]))
+        if cat in ("troupe", "lavalier", "prese_cavi"):
+            trovati = [(r["punteggio"], p, r) for _, p in foto for r in (oggetti[p.name] if p.name in oggetti else [])
+                       if r["categoria"] == cat]
+            for punteggio, p, r in sorted(trovati, key=lambda x: -x[0]):
+                sospetti.append((1 - punteggio, p, r["riquadro"], "oggetti", r["oggetto"]))
+        return sorted(sospetti, key=lambda s: s[0])
+
+    # Quante chiamate a Qwen3-VL servono al massimo (quelle non ancora fatte): la barra avanza a ogni
+    # chiamata. Il conteggio è per eccesso, perché ci si ferma al primo sospetto confermato.
+    da_verificare = {(q.numero, cat): sospetti_di(q, cat) for q in inquadrature for cat in categorie if cat != "sguardi"}
+    chiamate = sum(1 for (_, cat), lista in da_verificare.items() for _, p, riquadro, _, _ in lista[:MAX_VERIFICHE]
+                   if f"{p.name}|{cat}|{riquadro}" not in verifiche)
+    piano(verifica=chiamate)
+    fatte = 0
+
+    for q in inquadrature:
         foto = fotogrammi[q.numero]
         for cat in (c for c in CATEGORIE if c in categorie):
-            sospetti = []   # (priorità, fotogramma, riquadro, origine, oggetto)
-            for _, p in foto:
-                for r in (esame[f"{p.name}|{chiave_cat}"] if f"{p.name}|{chiave_cat}" in esame else []):
-                    if r["categoria"] == cat:
-                        sospetti.append((0, p, r["riquadro"], "esame", r["voce"]))
-            if cat in ("troupe", "lavalier", "prese_cavi"):
-                trovati = [(r["punteggio"], p, r) for _, p in foto for r in (oggetti[p.name] if p.name in oggetti else [])
-                           if r["categoria"] == cat]
-                for punteggio, p, r in sorted(trovati, key=lambda x: -x[0]):
-                    sospetti.append((1 - punteggio, p, r["riquadro"], "oggetti", r["oggetto"]))
+            sospetti = da_verificare.get((q.numero, cat), [])
             if cat == "sguardi":
                 # Misurati dal modello dello sguardo: nessuna verifica di Qwen3-VL.
                 trovati = sorted(((v["angolo"], p, v) for _, p in foto for v in (volti[p.name] if p.name in volti else [])
@@ -344,7 +402,6 @@ def main() -> None:
                 continue
             if not sospetti:
                 continue
-            sospetti.sort(key=lambda s: s[0])
             visti = len({s[1].name for s in sospetti})
             scartati, tentati = [], 0
             for _, p, riquadro, origine, oggetto in sospetti:
@@ -364,6 +421,9 @@ def main() -> None:
                     except RuntimeError as e:
                         print(f"Inquadratura {q.numero}: {e}")
                         continue
+                    finally:
+                        fatte += 1
+                        avanzamento("verifica", min(fatte, chiamate), max(chiamate, 1))
                 v = verifiche[k]
                 if not v.get("errore"):
                     scartati.append(riquadro)

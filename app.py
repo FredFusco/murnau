@@ -36,6 +36,7 @@ SESSIONI = DATI / "sessioni"
 FILE_CORRENTE = DATI / "sessione_corrente.json"
 FILE_VECCHIO = DATI / "progetto.json"  # prima delle sessioni
 REGISTRO = DATI / "murnau.log"
+FILE_VELOCITA = DATI / "velocita.json"  # secondi per unità di ogni fase, misurati nelle analisi precedenti
 MODELLO = rilevatori.MODELLO_PREDEFINITO
 ESTENSIONI_VIDEO = {".mov", ".mp4", ".mxf", ".m4v", ".avi", ".mkv"}
 ESTENSIONI_MONTAGGIO = {".edl", ".aaf"}
@@ -286,7 +287,14 @@ class Lavoro:
         self.log = deque(maxlen=300)
         self.fase = ""
         self.avanz = {}
+        self.piano = {}       # fase -> (unità di lavoro, secondi stimati per unità), nell'ordine delle fasi
+        try:
+            self.velocita = json.loads(FILE_VELOCITA.read_text())
+        except (OSError, ValueError):
+            self.velocita = {}
         self.inizio = 0.0
+        self.inizio_fase = 0.0
+        self.mostrata = 0     # percentuale già mostrata: non deve mai tornare indietro
         self.codice = None
         self.sessione = ""
         self.blocco = threading.Lock()
@@ -298,7 +306,8 @@ class Lavoro:
         with self.blocco:
             if self.attivo():
                 raise RuntimeError("C'è già un'analisi in corso.")
-            self.fase, self.avanz, self.codice, self.sessione = "avvio", {}, None, sessione
+            self.fase, self.avanz, self.piano, self.codice, self.sessione = "avvio", {}, {}, None, sessione
+            self.mostrata = 0
             self.log.clear()
             self.inizio = time.time()
             self.processo = subprocess.Popen(
@@ -312,7 +321,15 @@ class Lavoro:
         for riga in self.processo.stdout:
             riga = riga.rstrip()
             if riga.startswith("@@fase "):
+                self._impara()
                 self.fase = riga.split(" ", 1)[1]
+                self.inizio_fase = time.time()
+            elif riga.startswith("@@piano "):
+                # Le fasi non ripetute restano come annunciate prima (es. i fotogrammi già estratti).
+                for voce in riga.split()[1:]:
+                    nome, valori = voce.split("=")
+                    unita, costo = valori.split(":")
+                    self.piano[nome] = (int(unita), float(costo))
             elif riga.startswith("@@avanz "):
                 _, nome, fatti, totale = riga.split()
                 primo = self.avanz.get(nome, {}).get("primo", (int(fatti), time.time()))
@@ -320,11 +337,85 @@ class Lavoro:
             elif riga and "warn" not in riga.lower() and "%|" not in riga and "NOTE: Redirects" not in riga:
                 self.log.append(riga)
         self.codice = self.processo.wait()
+        self._impara()
         avvisa_fine(self.codice)
+
+    def _misura(self, nome: str):
+        """Secondi per unità della fase, misurati in questa analisi (None se non ancora misurabili)."""
+        a = self.avanz.get(nome)
+        if a and a["fatti"] > a["primo"][0]:
+            return (a["ora"] - a["primo"][1]) / (a["fatti"] - a["primo"][0])
+        return None
+
+    def _impara(self) -> None:
+        """Ricorda la velocità della fase appena finita, per stimare meglio le prossime analisi.
+
+        Media pesata con le volte precedenti: una sola analisi rallentata (per esempio perché
+        un'altra app usava Ollama nello stesso momento) non sposta troppo la stima.
+        """
+        misura = self._misura(self.fase)
+        if misura is None or self.avanz[self.fase]["fatti"] < 3:
+            return
+        prima = self.velocita.get(self.fase)
+        self.velocita[self.fase] = misura if prima is None else .6 * prima + .4 * misura
+        try:
+            DATI.mkdir(parents=True, exist_ok=True)
+            FILE_VELOCITA.write_text(json.dumps(self.velocita, indent=1))
+        except OSError:
+            pass
 
     def ferma(self) -> None:
         if self.attivo():
             os.killpg(self.processo.pid, signal.SIGTERM)
+
+    def complessivo(self) -> dict:
+        """Percentuale e tempo restante dell'intera analisi.
+
+        Ogni fase pesa per il suo lavoro (unità × secondi per unità). I secondi per unità sono
+        quelli misurati mentre la fase procede; per le fasi non ancora iniziate quelli imparati
+        nelle analisi precedenti su questo Mac, o in mancanza la stima del piano. La velocità di
+        una fase non dice nulla sulle altre: OWLv2 e Qwen3-VL lavorano in modo troppo diverso.
+        """
+        if self.fase == "fine":
+            return {"percentuale": 100, "eta": 0}
+        if not self.piano:
+            return {"percentuale": 0, "eta": None}
+        fasi = list(self.piano)
+        indice = fasi.index(self.fase) if self.fase in fasi else -1
+        misure = {n: m for n in fasi if (m := self._misura(n)) is not None}
+        totale = fatto = 0.0
+        for i, nome in enumerate(fasi):
+            unita, costo = self.piano[nome]
+            a = self.avanz.get(nome)
+            if a:
+                unita = a["totale"]
+            per_unita = misure.get(nome, self.velocita.get(nome, costo))
+            if i < indice:
+                svolte = unita
+            elif i == indice:
+                svolte = a["fatti"] if a else 0
+            else:
+                svolte = 0
+            totale += unita * per_unita
+            fatto += svolte * per_unita
+        if self.fase in fasi:
+            # Tra un aggiornamento e l'altro della fase in corso il tempo passa comunque: fino al
+            # tempo atteso per un'unità conta come lavoro svolto; oltre, è un ritardo (per esempio
+            # un'altra app che usa Ollama nello stesso momento): allunga il tempo restante ma non
+            # fa tornare indietro la percentuale.
+            a = self.avanz.get(self.fase) or {"ora": self.inizio_fase}
+            atteso = misure.get(self.fase, self.velocita.get(self.fase, self.piano[self.fase][1]))
+            passato = time.time() - a["ora"]
+            fatto = min(totale, fatto + min(passato, atteso))
+            ritardo = max(0.0, passato - atteso)
+        else:
+            ritardo = 0.0
+        if totale <= 0:
+            return {"percentuale": 0, "eta": None}
+        # Se una fase si rivela più lenta del previsto il totale cresce: il tempo restante si
+        # aggiorna, ma la percentuale mostrata resta ferma finché il lavoro non la raggiunge.
+        self.mostrata = max(self.mostrata, min(99, int(100 * fatto / totale)))
+        return {"percentuale": self.mostrata, "eta": max(0.0, totale - fatto) + ritardo}
 
     def stato(self) -> dict:
         avanz = {}
@@ -335,6 +426,7 @@ class Lavoro:
                 eta = (a["ora"] - t0) / (a["fatti"] - fatti0) * (a["totale"] - a["fatti"])
             avanz[nome] = {"fatti": a["fatti"], "totale": a["totale"], "eta": eta}
         return {"attivo": self.attivo(), "fase": self.fase, "avanzamento": avanz, "codice": self.codice,
+                "complessivo": self.complessivo(),
                 "sessione": self.sessione, "durata": time.time() - self.inizio if self.inizio else 0,
                 "log": list(self.log)[-40:]}
 
@@ -587,6 +679,23 @@ def identita_mac() -> None:
         pass
 
 
+def segui_nel_dock() -> None:
+    """Durante un'analisi, la percentuale compare sull'icona di Murnau nel Dock."""
+    from AppKit import NSApplication
+    from PyObjCTools import AppHelper
+
+    def metti(testo):
+        NSApplication.sharedApplication().dockTile().setBadgeLabel_(testo)
+
+    ultimo = None
+    while True:
+        testo = f"{LAVORO.complessivo()['percentuale']}%" if LAVORO.attivo() else ""
+        if testo != ultimo:
+            AppHelper.callAfter(metti, testo)
+            ultimo = testo
+        time.sleep(3)
+
+
 def collega_trascinamento(finestra) -> None:
     """File e cartelle lasciati sulla finestra: i percorsi completi arrivano dal lato nativo."""
     from webview.dom import DOMEventHandler
@@ -748,6 +857,7 @@ def main():
     def all_avvio():
         identita_mac()
         collega_trascinamento(FINESTRA)
+        threading.Thread(target=segui_nel_dock, daemon=True).start()
         from PyObjCTools import AppHelper
         AppHelper.callAfter(sistema_menu)
 

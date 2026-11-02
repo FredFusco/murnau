@@ -126,13 +126,22 @@ body.trascinando .zona { border-color: var(--accento); border-style: dashed; bac
 .errore { color: var(--accento); }
 /* avanzamento */
 .fasi { display: grid; gap: 8px; margin-top: 12px; }
-.fase { display: grid; grid-template-columns: 170px 1fr 150px; gap: 12px; align-items: center; color: var(--tenue); }
+.fase { display: grid; grid-template-columns: 170px 1fr 190px; gap: 12px; align-items: center; color: var(--tenue); }
 .fase.corrente { color: var(--inchiostro); font-weight: 600; }
 .fase.fatta { color: var(--ok); }
 .barra { height: 6px; background: var(--fondo-2); border-radius: 3px; overflow: hidden; }
 .barra div { height: 100%; background: var(--accento); width: 0; transition: width .4s; }
 .fase.fatta .barra div { background: var(--ok); }
-.fase .eta { font-size: 12.5px; text-align: right; font-weight: 400; }
+.fase .eta { font-size: 12.5px; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; }
+/* avanzamento complessivo */
+.complessivo { display: grid; grid-template-columns: auto 1fr; gap: 4px 18px; align-items: center; margin-top: 16px; padding: 14px 16px;
+  border: 1px solid var(--linea); border-radius: 10px; background: var(--fondo); }
+.complessivo .percentuale { grid-row: span 2; font: 700 40px/1 -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.02em; min-width: 2.6em; }
+.complessivo .barra { height: 10px; border-radius: 5px; }
+.complessivo .tempi { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13.5px; color: var(--tenue); font-variant-numeric: tabular-nums; }
+.complessivo .tempi b { color: var(--inchiostro); font-weight: 600; }
+.complessivo.finito .barra div { background: var(--ok); }
+nav .perc-tab { font-size: 12px; font-weight: 600; color: var(--accento); margin-left: 6px; font-variant-numeric: tabular-nums; }
 details { margin-top: 12px; }
 summary { cursor: pointer; color: var(--tenue); }
 pre { background: var(--fondo); border: 1px solid var(--linea); border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; }
@@ -209,7 +218,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <div class="elenco-sessioni" id="elenco-sessioni" hidden></div>
     </div>
     <nav>
-      <button data-vista="analisi" class="attivo">Analisi<span class="in-corso" id="in-corso" hidden></span></button>
+      <button data-vista="analisi" class="attivo">Analisi<span class="in-corso" id="in-corso" hidden></span><span class="perc-tab" id="perc-tab" hidden></span></button>
       <button data-vista="segnalazioni">Segnalazioni<span class="conta" id="conta-tab" hidden></span></button>
     </nav>
   </div>
@@ -272,6 +281,11 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <button class="bottone principale" id="avvia" data-comando="analizza">Analizza il film</button>
       <button class="bottone" id="ferma" hidden>Ferma</button>
       <span id="esito-avvio" class="errore"></span>
+    </div>
+    <div class="complessivo" id="complessivo" hidden>
+      <div class="percentuale" id="perc-totale">0%</div>
+      <div class="barra"><div id="barra-totale"></div></div>
+      <div class="tempi"><span id="tempo-restante"></span><span id="tempo-trascorso"></span><span id="fase-attuale"></span></div>
     </div>
     <div class="fasi" id="fasi" hidden></div>
     <details id="dettagli" hidden><summary>Dettagli dell'elaborazione</summary><pre id="log"></pre></details>
@@ -340,7 +354,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
 
 <script>
 const FASI = [["preparazione", "Preparazione"], ["fotogrammi", "Fotogrammi"], ["oggetti", "Oggetti (OWLv2)"],
-              ["volti", "Volti e sguardi"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti"]];
+              ["volti", "Volti e sguardi"], ["modello", "Caricamento di Qwen3-VL"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti"]];
 const DESCRIZIONI = {
   troupe: "Boom, macchina da presa, stativi, luci da set, operatori e troupe in campo",
   riflessi: "Troupe e attrezzatura riflesse in specchi, vetri, occhiali, carrozzerie",
@@ -571,19 +585,35 @@ function disegnaLavoro(l) {
   $("#avvia").hidden = l.attivo;
   $("#ferma").hidden = !l.attivo;
   $("#in-corso").hidden = !l.attivo;
+  const c = l.complessivo || {};
+  $("#perc-tab").hidden = !l.attivo;
+  testo($("#perc-tab"), `${c.percentuale || 0}%`);
+  document.title = l.attivo ? `Murnau · ${c.percentuale || 0}%` : "Murnau";
   const iniziato = qui && (l.attivo || l.codice !== null);
   $("#fasi").hidden = !iniziato;
+  $("#complessivo").hidden = !iniziato;
   $("#dettagli").hidden = !iniziato;
   if (l.attivo && !qui) testo($("#esito-avvio"), "C'è un'analisi in corso in un'altra sessione.");
   if (!iniziato) return;
   const indice = FASI.findIndex(f => f[0] === l.fase);
   const finito = l.fase === "fine";
+  // Riepilogo dell'intera analisi.
+  const perc = finito ? 100 : (c.percentuale || 0);
+  testo($("#perc-totale"), `${perc}%`);
+  $("#barra-totale").style.width = perc + "%";
+  $("#complessivo").classList.toggle("finito", finito);
+  const nomeFase = (FASI.find(f => f[0] === l.fase) || [, l.fase === "avvio" || l.fase === "preparazione" ? "Preparazione" : ""])[1];
+  $("#tempo-restante").innerHTML = finito ? "<b>Completata</b>"
+    : !l.attivo ? (l.codice === 0 ? "" : "<b>Interrotta</b> · rilanciandola riprende da qui")
+    : c.eta == null ? "<b>Calcolo il tempo…</b>" : `mancano circa <b>${durata(c.eta)}</b>`;
+  testo($("#tempo-trascorso"), l.durata ? `${finito || !l.attivo ? "durata" : "trascorsi"} ${durata(l.durata)}` : "");
+  testo($("#fase-attuale"), l.attivo && nomeFase ? `fase: ${nomeFase}` : "");
   $("#fasi").innerHTML = FASI.map(([k, nome], i) => {
     const a = l.avanzamento[k];
     const fatta = finito || (indice > i && indice >= 0);
     const corrente = !finito && i === indice;
     let perc = fatta ? 100 : a ? 100 * a.fatti / Math.max(1, a.totale) : 0;
-    let eta = fatta ? "fatto" : corrente ? (a ? `${a.fatti} di ${a.totale}${a.eta ? " · " + durata(a.eta) : ""}` : "in corso…") : "";
+    let eta = fatta ? "fatto" : corrente ? (a ? `${Math.floor(perc)}% · ${a.fatti} di ${a.totale}${a.eta ? " · " + durata(a.eta) : ""}` : "in corso…") : "";
     if (corrente && !l.attivo) eta = l.codice === 0 ? "" : "interrotta";
     return `<div class="fase ${fatta ? "fatta" : ""} ${corrente ? "corrente" : ""}"><span>${nome}</span>
       <div class="barra"><div style="width:${perc}%"></div></div><span class="eta">${eta}</span></div>`;

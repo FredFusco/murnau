@@ -20,6 +20,7 @@ import urllib.request
 from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
+CONTESTO = 8192           # token di contesto chiesti a Ollama (deve essere lo stesso in ogni richiesta)
 MODELLO_PREDEFINITO = "qwen3-vl:30b-a3b-instruct"
 MODELLO_OGGETTI = "google/owlv2-base-patch16-ensemble"
 CARTELLA_MODELLI = Path.home() / "Library" / "Application Support" / "Murnau" / "modelli"
@@ -191,7 +192,7 @@ def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: i
                       "images": [base64.b64encode(i if isinstance(i, bytes) else Path(i).read_bytes()).decode()
                                  for i in immagini]}],
         "format": schema, "stream": False, "think": False, "keep_alive": "30m",
-        "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 900},
+        "options": {"temperature": 0, "num_ctx": CONTESTO, "num_predict": 900},
     }).encode()
     for tentativo in range(1, tentativi + 1):
         try:
@@ -322,6 +323,31 @@ def verifica(modello: str, categoria: str, immagini: list) -> dict:
         r["classe_controllo"] = controllo.get("classe")
         r["errore"] = r["classe_controllo"] in errori
     return r
+
+
+def modello_caricato(modello: str) -> bool:
+    """True se Ollama ha già il modello in memoria con il contesto di Murnau (nessuna attesa).
+
+    Se un'altra app (Vertov, Ozu) l'ha caricato con un contesto diverso, Ollama lo ricarica
+    alla prima richiesta di Murnau: conta come non caricato.
+    """
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=3) as r:
+            return any(m["name"] == modello and m.get("context_length", CONTESTO) == CONTESTO
+                       for m in json.load(r).get("models", []))
+    except Exception:
+        return False
+
+
+def carica_modello(modello: str) -> None:
+    """Porta il modello in memoria con il contesto che usa Murnau, senza fargli generare nulla."""
+    corpo = json.dumps({"model": modello, "keep_alive": "30m", "options": {"num_ctx": CONTESTO}}).encode()
+    try:
+        req = urllib.request.Request("http://localhost:11434/api/generate", data=corpo,
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=600).read()
+    except Exception as e:
+        print(f"Caricamento del modello non riuscito ({e}): ci riprovo con il primo esame.")
 
 
 def ollama_pronto(modello: str) -> bool:
