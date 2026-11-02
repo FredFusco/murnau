@@ -133,6 +133,15 @@ body.trascinando .zona { border-color: var(--accento); border-style: dashed; bac
 .barra div { height: 100%; background: var(--accento); width: 0; transition: width .4s; }
 .fase.fatta .barra div { background: var(--ok); }
 .fase .eta { font-size: 12.5px; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; }
+/* analisi in corso fuori dall'app */
+.esterne { border: 1px solid var(--avviso); background: color-mix(in srgb, var(--avviso) 10%, var(--pannello)); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+.esterne h3 { margin: 0 0 4px; font-size: 15px; }
+.esterne p { margin: 0 0 8px; font-size: 13px; color: var(--tenue); }
+.esterna { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--linea); font-size: 13.5px; }
+.esterna .cosa { flex: 1; min-width: 240px; }
+.esterna .cosa b { display: block; }
+.esterna .cosa span { color: var(--tenue); font-size: 12.5px; }
+.complessivo .attesa { color: var(--avviso); font-weight: 600; }
 /* avanzamento complessivo */
 .complessivo { display: grid; grid-template-columns: auto 1fr; gap: 4px 18px; align-items: center; margin-top: 16px; padding: 14px 16px;
   border: 1px solid var(--linea); border-radius: 10px; background: var(--fondo); }
@@ -232,6 +241,12 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <button class="bottone piccolo" data-comando="aggiornamenti">Aggiornamenti…</button>
       <button class="bottone piccolo" data-comando="pulizia">Libera spazio…</button>
     </span>
+  </div>
+
+  <div class="esterne" id="esterne" hidden>
+    <h3>Analisi di Murnau in corso fuori da questa finestra</h3>
+    <p>Partita da Terminale o da un'altra sessione: usa il modello e la memoria anche se non la vedi altrove. Puoi lasciarla finire o fermarla.</p>
+    <div id="elenco-esterne"></div>
   </div>
 
   <div class="pannello">
@@ -604,6 +619,7 @@ function disegnaLavoro(l) {
   $("#complessivo").classList.toggle("finito", finito);
   const nomeFase = (FASI.find(f => f[0] === l.fase) || [, l.fase === "avvio" || l.fase === "preparazione" ? "Preparazione" : ""])[1];
   $("#tempo-restante").innerHTML = finito ? "<b>Completata</b>"
+    : l.attivo && l.attesa ? `<span class="attesa">${esc(l.attesa)}</span> · riparte da sola`
     : !l.attivo ? (l.codice === 0 ? "" : "<b>Interrotta</b> · rilanciandola riprende da qui")
     : c.eta == null ? "<b>Calcolo il tempo…</b>" : `mancano circa <b>${durata(c.eta)}</b>`;
   testo($("#tempo-trascorso"), l.durata ? `${finito || !l.attivo ? "durata" : "trascorsi"} ${durata(l.durata)}` : "");
@@ -627,6 +643,27 @@ function disegnaLavoro(l) {
   }
 }
 
+function disegnaEsterne(esterne) {
+  $("#esterne").hidden = !esterne.length;
+  const origini = {terminale: "avviata da Terminale", app: "avviata da un'altra finestra di Murnau", sconosciuta: "avviata fuori dall'app"};
+  $("#elenco-esterne").replaceChildren(...esterne.map(a => {
+    const riga = crea("div", "esterna");
+    const cosa = crea("div", "cosa");
+    const fase = (FASI.find(f => f[0] === a.fase) || [, a.fase])[1];
+    const dettagli = [origini[a.origine] || origini.sconosciuta, a.da != null ? `da ${durata(a.da)}` : "",
+      a.attesa || (fase ? `fase: ${fase}${a.totale ? ` (${a.fatti} di ${a.totale})` : ""}` : ""), a.out ? `risultati in ${a.out}` : ""].filter(Boolean);
+    cosa.append(crea("b", "", a.film || `processo ${a.pid}`), crea("span", "", dettagli.join(" · ")));
+    const ferma = crea("button", "bottone piccolo", "Ferma");
+    ferma.onclick = async () => {
+      if (!confirm(`Fermare l'analisi di ${a.film || "processo " + a.pid}? Rilanciandola riprenderà da dove era arrivata.`)) return;
+      try { await api("/api/ferma-esterna", {pid: a.pid}); ferma.disabled = true; ferma.textContent = "Fermata"; }
+      catch (e) { alert(e.message); }
+    };
+    riga.append(cosa, ferma);
+    return riga;
+  }));
+}
+
 function disegnaPrerequisiti(s) {
   const voce = (ok, si, no) => `<span><span class="pallino-stato ${ok ? "ok" : ""}"></span>${ok ? si : no}</span>`;
   $("#prerequisiti").innerHTML = voce(s.ollama, "Ollama acceso", "Ollama spento: verrà avviato all'inizio dell'analisi") +
@@ -644,6 +681,7 @@ async function aggiorna() {
     disegnaProgetto();
     disegnaLavoro(s.lavoro);
     disegnaPrerequisiti(s);
+    disegnaEsterne(s.esterne || []);
     if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden)) caricaSegnalazioni();
     if (prima && prima.lavoro.attivo && !s.lavoro.attivo && s.lavoro.codice === 0 && s.lavoro.sessione === progetto.id) mostraVista("segnalazioni");
   } catch (e) { /* il server si sta chiudendo */ }

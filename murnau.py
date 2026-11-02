@@ -17,15 +17,18 @@ ingrandito.
 """
 
 import argparse
+import atexit
 import json
 import math
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+import coordinamento
 import esporta
 import montaggio
 import rilevatori
@@ -35,13 +38,51 @@ LARGHEZZA = 1280           # pixel dei fotogrammi analizzati
 MAX_VERIFICHE = 3          # sospetti verificati al massimo per inquadratura e categoria
 
 
+REGISTRO = None      # coordinamento.Registro di questa analisi
+FFMPEG = None        # l'estrazione dei fotogrammi in corso, da fermare se l'analisi si interrompe
+FINITA = False
+
+
 def fase(nome: str) -> None:
     print(f"@@fase {nome}", flush=True)
+    if REGISTRO:
+        REGISTRO.aggiorna(fase=nome, fatti=0, totale=0)
 
 
 def avanzamento(nome: str, fatti: int, totale: int) -> None:
     if totale <= 200 or fatti % max(1, totale // 200) == 0 or fatti == totale:
         print(f"@@avanz {nome} {fatti} {totale}", flush=True)
+    if REGISTRO:
+        REGISTRO.aggiorna(fatti=fatti, totale=totale)
+
+
+def attesa(testo: str) -> None:
+    """Avvisa l'app che l'analisi è ferma in attesa (stringa vuota: si riparte)."""
+    print(f"@@attesa {testo}".rstrip(), flush=True)
+    if REGISTRO:
+        REGISTRO.aggiorna(attesa=testo)
+
+
+_ULTIMO_TURNO = [0.0]
+
+
+def turno() -> None:
+    """Prima di usare il modello: se Vertov sta analizzando, gli si lascia il modello.
+    Si controlla al più ogni 30 secondi: costa poco ma non serve farlo a ogni fotogramma."""
+    if time.time() - _ULTIMO_TURNO[0] > 30:
+        coordinamento.aspetta_il_turno(attesa)
+        _ULTIMO_TURNO[0] = time.time()
+
+
+def chiusura(modello: str, video: Path) -> None:
+    """All'uscita, normale o interrotta: niente resta acceso e il modello non resta in memoria."""
+    if FFMPEG and FFMPEG.poll() is None:
+        FFMPEG.kill()
+    if REGISTRO:
+        REGISTRO.chiudi()
+        if REGISTRO.dati["origine"] == "terminale":
+            coordinamento.notifica(f"{'Analisi finita' if FINITA else 'Analisi interrotta'}: {video.name}")
+    coordinamento.libera_modello(modello, rilevatori.CONTESTO)
 
 
 # Secondi stimati per unità di lavoro di ogni fase (M5 Max, Ollama libero): servono a pesare le
@@ -104,7 +145,8 @@ def estrai_fotogrammi(video: Path, inquadrature: list, cartella: Path, passo: fl
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
                "-ss", f"{inizio:.3f}", "-to", f"{fine:.3f}", "-i", str(video), "-an", "-sn",
                "-vf", filtri, "-q:v", "3", "-start_number", "0", str(cartella / "f%06d.jpg")]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        global FFMPEG
+        proc = FFMPEG = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
         totale = round(fine - inizio)
         for riga in proc.stdout:
             m = re.match(r"out_time_us=(\d+)", riga)
@@ -231,6 +273,17 @@ def main() -> None:
     lavoro.mkdir(parents=True, exist_ok=True)
     (out / "segnalazioni").mkdir(exist_ok=True)
 
+    # Ogni analisi si registra, così l'app la vede anche se è partita da Terminale; all'uscita
+    # (anche se interrotta con Ferma, ⌃C o dalla chiusura dell'app) si toglie e libera il modello.
+    global REGISTRO, FINITA
+    REGISTRO = coordinamento.Registro(str(args.video), str(out))
+    atexit.register(chiusura, args.modello, args.video)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    signal.signal(signal.SIGHUP, lambda *_: sys.exit(129))
+    coordinamento.sorveglia_app()
+    if REGISTRO.dati["origine"] == "terminale":
+        coordinamento.notifica(f"Analisi avviata da Terminale: {args.video.name}. La vedi e la puoi fermare dall'app.")
+
     # 1. Inquadrature
     fase("preparazione")
     fps, durata, tc_file = montaggio.info_video(args.video)
@@ -325,6 +378,7 @@ def main() -> None:
     rilevatori.avvia_ollama()
     if not rilevatori.ollama_pronto(args.modello):
         sys.exit(f"Ollama non è acceso o manca il modello {args.modello}.")
+    turno()
     if not rilevatori.modello_caricato(args.modello):
         # Il primo caricamento di Qwen3-VL in memoria richiede da mezzo minuto a un minuto e mezzo.
         fase("modello")
@@ -334,6 +388,7 @@ def main() -> None:
     # Solo i fotogrammi non ancora esaminati: così il tempo stimato misura il lavoro vero.
     for n, p in enumerate(da_esaminare, 1):
         try:
+            turno()
             esame.metti(f"{p.name}|{chiave_cat}", rilevatori.esamina(args.modello, p, categorie))
         except RuntimeError as e:
             print(f"{p.name}: {e}")
@@ -417,6 +472,7 @@ def main() -> None:
                 if k not in verifiche:
                     immagini = [dettaglio] if cat == "sguardi" else [segnato, dettaglio]
                     try:
+                        turno()
                         verifiche.metti(k, rilevatori.verifica(args.modello, cat, immagini))
                     except RuntimeError as e:
                         print(f"Inquadratura {q.numero}: {e}")
@@ -438,6 +494,7 @@ def main() -> None:
             "creato": time.strftime("%Y-%m-%d %H:%M"), "segnalazioni": segnalazioni}
     (out / "segnalazioni.json").write_text(json.dumps(dati, ensure_ascii=False, indent=1), encoding="utf-8")
     esporta.tutto(out)
+    FINITA = True
     fase("fine")
     conteggio = {CATEGORIE[c]: sum(1 for s in segnalazioni if s["categoria"] == c) for c in CATEGORIE if c in categorie}
     print(f"Fatto: {len(segnalazioni)} segnalazioni su {len(inquadrature)} inquadrature. "

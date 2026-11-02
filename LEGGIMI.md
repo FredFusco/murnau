@@ -46,6 +46,16 @@ Le stesse voci sono nel menu **File** (⌘N, ⌘O, ⌘S).
 
 I modelli di Murnau stanno nella sua cartella (`~/Library/Application Support/Murnau/modelli`), così la pulizia di altre app, come Vertov, non li cancella per errore.
 
+## Insieme a Vertov e Ozu
+
+Le tre app usano lo stesso modello, Qwen3-VL, ma con impostazioni diverse: se lavorano insieme, Ollama deve ricaricarlo (20 GB) a ogni cambio e tutto rallenta di molto. Per questo:
+
+- **Precedenza a Vertov**: prima di usare il modello Murnau controlla se un'analisi di Vertov è in corso e, se sì, aspetta («In attesa: Vertov sta usando il modello») e riparte da sola. Ozu a sua volta aspetta Murnau.
+- **Una sola analisi di Murnau alla volta**: l'app non ne avvia una se ce n'è già un'altra in corso.
+- **Memoria**: Murnau tiene il modello caricato solo 5 minuti dopo l'ultima richiesta e, a fine analisi, lo toglie subito dalla memoria, se è la copia caricata da lei e nessun'altra app lo sta usando.
+- **Chiusura vera**: chiudendo l'app l'analisi si ferma, insieme all'estrazione dei fotogrammi. Se l'app si chiude in modo anomalo (crash, chiusura forzata), l'analisi se ne accorge e si spegne da sola entro un secondo. Si può riprendere da dove era arrivata.
+- **Niente analisi nascoste**: anche un'analisi lanciata da Terminale si vede nell'app, in cima alla scheda Analisi, con il film, da quanto tempo gira, la fase e un pulsante **Ferma**. All'avvio e alla fine manda una notifica di macOS.
+
 ## Come funziona
 
 1. Estrae un fotogramma al secondo (senza le bande nere) e scarta quelli a ridosso dei tagli.

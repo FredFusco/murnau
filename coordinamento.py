@@ -1,0 +1,194 @@
+"""Convivenza di Murnau con sé stessa e con le altre app della famiglia (Vertov, Ozu).
+
+- Registro delle analisi in corso: ogni analisi (lanciata dall'app o da Terminale) scrive
+  un file in ~/Library/Application Support/Murnau/lavori/ e lo toglie quando finisce. Così
+  l'app vede anche le analisi partite fuori da lei, e nessuna resta accesa per ore di nascosto.
+- Sorveglianza: un'analisi lanciata dall'app si spegne da sola se l'app non c'è più (chiusa,
+  forzata, andata in crash).
+- Turni sul modello: Vertov, Murnau e Ozu usano lo stesso Qwen3-VL con contesti diversi, e
+  Ollama lo ricarica (20 GB) ogni volta che il contesto cambia. Murnau lascia il modello a
+  Vertov finché un'analisi di Vertov è in corso; Ozu a sua volta aspetta Murnau.
+- Memoria: a fine analisi Murnau toglie il modello dalla memoria, se è la copia caricata da
+  lei e nessun'altra app lo sta usando.
+"""
+
+import json
+import os
+import re
+import signal
+import subprocess
+import threading
+import time
+import urllib.request
+from pathlib import Path
+
+DATI = Path.home() / "Library" / "Application Support" / "Murnau"
+LAVORI = DATI / "lavori"
+OLLAMA = "http://localhost:11434"
+VARIABILE_GENITORE = "MURNAU_APP"   # pid dell'app che ha lanciato l'analisi
+# Programmi di analisi delle altre app che usano il modello (vedi i loro app.py).
+ALTRI_PROGRAMMI = {"Vertov": "descrittore_inquadrature/descrivi.py"}
+PROGRAMMA = "murnau/murnau.py"
+
+
+def _processi() -> list:
+    """Righe "pid durata comando" dei soli processi il cui eseguibile è Python.
+
+    Si guarda l'eseguibile vero (non il testo del comando): una shell o un altro programma che
+    nomina nel comando sia "python" sia il percorso di un'analisi non deve sembrare un'analisi.
+    """
+    try:
+        eseguibili = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True, timeout=5).stdout
+        comandi = subprocess.run(["ps", "-axo", "pid=,etime=,command="], capture_output=True, text=True,
+                                 timeout=5).stdout
+    except Exception:
+        return []
+    python = {r.split(None, 1)[0] for r in eseguibili.splitlines()
+              if len(r.split(None, 1)) == 2 and "python" in Path(r.split(None, 1)[1]).name.lower()}
+    return [r for r in comandi.splitlines() if r.split(None, 1)[:1] and r.split(None, 1)[0] in python]
+
+
+def _esegue(riga: str, programma: str) -> bool:
+    # Python che esegue proprio quel programma, non uno che ne nomina il percorso in un argomento.
+    return re.search(re.escape(programma) + r"(\s|$)", riga) is not None
+
+
+def altre_app_al_lavoro() -> list:
+    """Le app della famiglia (a cui Murnau dà la precedenza) con un'analisi in corso."""
+    processi = _processi()
+    return [nome for nome, programma in ALTRI_PROGRAMMI.items() if any(_esegue(r, programma) for r in processi)]
+
+
+def e_murnau(pid: int) -> bool:
+    """True se il pid è un'analisi di Murnau in esecuzione (prima di fermarla, per sicurezza)."""
+    for riga in _processi():
+        parti = riga.split(None, 2)
+        if len(parti) == 3 and parti[0] == str(pid):
+            return _esegue(parti[2], PROGRAMMA)
+    return False
+
+
+# --------------------------------------------------------------------------
+# Registro delle analisi in corso
+# --------------------------------------------------------------------------
+
+class Registro:
+    """Il file di questa analisi in LAVORI/<pid>.json, tolto all'uscita."""
+
+    def __init__(self, video: str, out: str):
+        self.file = LAVORI / f"{os.getpid()}.json"
+        self.dati = {"pid": os.getpid(), "video": video, "out": out, "avviata": time.time(),
+                     "origine": "app" if os.environ.get(VARIABILE_GENITORE) else "terminale",
+                     "fase": "preparazione", "fatti": 0, "totale": 0}
+        self._ultima = 0.0
+        LAVORI.mkdir(parents=True, exist_ok=True)
+        self._scrivi()
+
+    def _scrivi(self) -> None:
+        try:
+            self.file.write_text(json.dumps(self.dati, ensure_ascii=False))
+        except OSError:
+            pass
+
+    def aggiorna(self, **valori) -> None:
+        self.dati.update(valori)
+        if "fase" in valori or time.time() - self._ultima > 5:
+            self._ultima = time.time()
+            self._scrivi()
+
+    def chiudi(self) -> None:
+        self.file.unlink(missing_ok=True)
+
+
+def analisi_in_corso() -> list:
+    """Le analisi di Murnau in esecuzione su questo Mac, comprese quelle partite da Terminale.
+
+    I file di analisi finite male (processo non più vivo) vengono tolti.
+    """
+    vive = {}
+    for riga in _processi():
+        parti = riga.split(None, 2)
+        if len(parti) == 3 and _esegue(parti[2], PROGRAMMA):
+            vive[int(parti[0])] = parti[1]
+    elenco = []
+    for f in LAVORI.glob("*.json") if LAVORI.exists() else []:
+        try:
+            dati = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if dati.get("pid") in vive:
+            elenco.append(dati)
+        else:
+            f.unlink(missing_ok=True)
+    # Analisi lanciate da una versione precedente, senza registro: si vedono comunque.
+    noti = {d["pid"] for d in elenco}
+    for pid, durata in vive.items():
+        if pid not in noti:
+            elenco.append({"pid": pid, "video": "", "origine": "sconosciuta", "durata_ps": durata})
+    return elenco
+
+
+# --------------------------------------------------------------------------
+# Sorveglianza dell'app
+# --------------------------------------------------------------------------
+
+def sorveglia_app() -> None:
+    """Se l'analisi è stata lanciata dall'app, si ferma appena l'app non c'è più."""
+    pid = os.environ.get(VARIABILE_GENITORE)
+    if not pid:
+        return
+
+    def controlla():
+        while True:
+            time.sleep(1)
+            try:
+                os.kill(int(pid), 0)
+            except (ProcessLookupError, ValueError):
+                os.kill(os.getpid(), signal.SIGTERM)  # uscita ordinata: si toglie il registro, si libera il modello
+                return
+            except PermissionError:
+                pass  # esiste ancora
+
+    threading.Thread(target=controlla, daemon=True).start()
+
+
+# --------------------------------------------------------------------------
+# Modello
+# --------------------------------------------------------------------------
+
+def aspetta_il_turno(avvisa) -> None:
+    """Se Vertov sta analizzando, aspetta che finisca: usano lo stesso modello con un altro contesto
+    e lavorare insieme costringerebbe Ollama a ricaricarlo di continuo, rallentando entrambe."""
+    occupate = altre_app_al_lavoro()
+    if not occupate:
+        return
+    while occupate:
+        avvisa(f"In attesa: {' e '.join(occupate)} sta usando il modello")
+        time.sleep(15)
+        occupate = altre_app_al_lavoro()
+    avvisa("")
+
+
+def libera_modello(modello: str, contesto: int) -> None:
+    """Toglie il modello dalla memoria se è la copia caricata da Murnau e nessun'altra analisi lo usa."""
+    try:
+        with urllib.request.urlopen(f"{OLLAMA}/api/ps", timeout=3) as r:
+            caricati = json.load(r).get("models", [])
+        nostro = any(m.get("name") == modello and m.get("context_length") == contesto for m in caricati)
+        altre_murnau = [a for a in analisi_in_corso() if a["pid"] != os.getpid()]
+        if not nostro or altre_murnau or altre_app_al_lavoro():
+            return
+        corpo = json.dumps({"model": modello, "keep_alive": 0}).encode()
+        urllib.request.urlopen(urllib.request.Request(f"{OLLAMA}/api/generate", data=corpo,
+                                                      headers={"Content-Type": "application/json"}), timeout=30)
+    except Exception:
+        pass  # Ollama spento o modello già scarico
+
+
+def notifica(testo: str) -> None:
+    """Notifica di macOS: un'analisi lanciata da Terminale non passa inosservata."""
+    try:
+        subprocess.Popen(["osascript", "-e", f'display notification {json.dumps(testo)} with title "Murnau"'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass

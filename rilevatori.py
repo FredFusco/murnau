@@ -21,6 +21,7 @@ from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 CONTESTO = 8192           # token di contesto chiesti a Ollama (deve essere lo stesso in ogni richiesta)
+TENUTA = "5m"             # quanto Ollama tiene il modello in memoria dopo l'ultima richiesta di Murnau
 MODELLO_PREDEFINITO = "qwen3-vl:30b-a3b-instruct"
 MODELLO_OGGETTI = "google/owlv2-base-patch16-ensemble"
 CARTELLA_MODELLI = Path.home() / "Library" / "Application Support" / "Murnau" / "modelli"
@@ -191,7 +192,7 @@ def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: i
         "messages": [{"role": "user", "content": prompt,
                       "images": [base64.b64encode(i if isinstance(i, bytes) else Path(i).read_bytes()).decode()
                                  for i in immagini]}],
-        "format": schema, "stream": False, "think": False, "keep_alive": "30m",
+        "format": schema, "stream": False, "think": False, "keep_alive": TENUTA,
         "options": {"temperature": 0, "num_ctx": CONTESTO, "num_predict": 900},
     }).encode()
     for tentativo in range(1, tentativi + 1):
@@ -341,7 +342,7 @@ def modello_caricato(modello: str) -> bool:
 
 def carica_modello(modello: str) -> None:
     """Porta il modello in memoria con il contesto che usa Murnau, senza fargli generare nulla."""
-    corpo = json.dumps({"model": modello, "keep_alive": "30m", "options": {"num_ctx": CONTESTO}}).encode()
+    corpo = json.dumps({"model": modello, "keep_alive": TENUTA, "options": {"num_ctx": CONTESTO}}).encode()
     try:
         req = urllib.request.Request("http://localhost:11434/api/generate", data=corpo,
                                      headers={"Content-Type": "application/json"})

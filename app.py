@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import aggiornamenti
+import coordinamento
 import esporta
 import montaggio
 import pulizia
@@ -295,6 +296,7 @@ class Lavoro:
         self.inizio = 0.0
         self.inizio_fase = 0.0
         self.mostrata = 0     # percentuale già mostrata: non deve mai tornare indietro
+        self.attesa = ""      # perché l'analisi è ferma in attesa (es. Vertov usa il modello)
         self.codice = None
         self.sessione = ""
         self.blocco = threading.Lock()
@@ -306,15 +308,22 @@ class Lavoro:
         with self.blocco:
             if self.attivo():
                 raise RuntimeError("C'è già un'analisi in corso.")
+            fuori = coordinamento.analisi_in_corso()
+            if fuori:
+                raise RuntimeError("C'è già un'analisi di Murnau in corso, avviata fuori dall'app: due analisi "
+                                   "insieme si rubano il modello a vicenda. Fermala o aspetta che finisca.")
             self.fase, self.avanz, self.piano, self.codice, self.sessione = "avvio", {}, {}, None, sessione
             self.mostrata = 0
+            self.attesa = ""
             self.log.clear()
             self.inizio = time.time()
             self.processo = subprocess.Popen(
                 cmd, cwd=CARTELLA, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                 start_new_session=True,
                 env={**os.environ, "PYTHONWARNINGS": "ignore", "TQDM_DISABLE": "1",
-                     "HF_HUB_DISABLE_TELEMETRY": "1"})
+                     "HF_HUB_DISABLE_TELEMETRY": "1",
+                     # l'analisi si spegne da sola se l'app non c'è più (chiusa, forzata, in crash)
+                     coordinamento.VARIABILE_GENITORE: str(os.getpid())})
         threading.Thread(target=self._leggi, daemon=True).start()
 
     def _leggi(self) -> None:
@@ -324,6 +333,8 @@ class Lavoro:
                 self._impara()
                 self.fase = riga.split(" ", 1)[1]
                 self.inizio_fase = time.time()
+            elif riga.startswith("@@attesa"):
+                self.attesa = riga[len("@@attesa"):].strip()
             elif riga.startswith("@@piano "):
                 # Le fasi non ripetute restano come annunciate prima (es. i fotogrammi già estratti).
                 for voce in riga.split()[1:]:
@@ -365,8 +376,21 @@ class Lavoro:
             pass
 
     def ferma(self) -> None:
-        if self.attivo():
-            os.killpg(self.processo.pid, signal.SIGTERM)
+        """Ferma l'analisi e tutto ciò che ha avviato; se entro 5 secondi non è uscita, la chiude d'ufficio."""
+        if not self.attivo():
+            return
+        processo = self.processo
+        try:
+            os.killpg(processo.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            processo.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(processo.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def complessivo(self) -> dict:
         """Percentuale e tempo restante dell'intera analisi.
@@ -426,7 +450,7 @@ class Lavoro:
                 eta = (a["ora"] - t0) / (a["fatti"] - fatti0) * (a["totale"] - a["fatti"])
             avanz[nome] = {"fatti": a["fatti"], "totale": a["totale"], "eta": eta}
         return {"attivo": self.attivo(), "fase": self.fase, "avanzamento": avanz, "codice": self.codice,
-                "complessivo": self.complessivo(),
+                "complessivo": self.complessivo(), "attesa": self.attesa if self.attivo() else "",
                 "sessione": self.sessione, "durata": time.time() - self.inizio if self.inizio else 0,
                 "log": list(self.log)[-40:]}
 
@@ -520,7 +544,17 @@ class Gestore(BaseHTTPRequestHandler):
             self._invia((CARTELLA / "icona_murnau.png").read_bytes(), "image/png")
         elif url.path == "/api/stato":
             mancanti = [p[r] for r in RUOLI if p.get(r) and not Path(p[r]).exists()]
-            self._json({"progetto": p, "lavoro": LAVORO.stato(), "mancanti": mancanti,
+            nostra = LAVORO.processo.pid if LAVORO.attivo() else None
+            esterne = []
+            for a in coordinamento.analisi_in_corso():
+                if a["pid"] == nostra:
+                    continue
+                esterne.append({"pid": a["pid"], "film": Path(a["video"]).name if a.get("video") else "",
+                                "origine": a.get("origine", "sconosciuta"),
+                                "da": time.time() - a["avviata"] if a.get("avviata") else None,
+                                "fase": a.get("fase", ""), "fatti": a.get("fatti", 0), "totale": a.get("totale", 0),
+                                "attesa": a.get("attesa", ""), "out": a.get("out", "")})
+            self._json({"progetto": p, "lavoro": LAVORO.stato(), "mancanti": mancanti, "esterne": esterne,
                         "ollama": rilevatori.ollama_pronto(""), "modello": rilevatori.ollama_pronto(MODELLO),
                         "risultati": bool(out and (out / "segnalazioni.json").exists()),
                         "categorie": rilevatori.CATEGORIE})
@@ -608,6 +642,12 @@ class Gestore(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif url.path == "/api/ferma":
                 LAVORO.ferma()
+                self._json({"ok": True})
+            elif url.path == "/api/ferma-esterna":
+                pid = int(corpo["pid"])
+                if not coordinamento.e_murnau(pid):  # mai fermare un processo che non sia un'analisi di Murnau
+                    raise RuntimeError("Quell'analisi non è più in corso.")
+                os.kill(pid, signal.SIGTERM)
                 self._json({"ok": True})
             elif url.path == "/api/rivedi":
                 rivedi(Path(p["out"]), corpo["id"], corpo.get("stato"), corpo.get("nota"))
