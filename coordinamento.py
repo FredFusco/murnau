@@ -27,7 +27,7 @@ LAVORI = DATI / "lavori"
 OLLAMA = "http://localhost:11434"
 VARIABILE_GENITORE = "MURNAU_APP"   # pid dell'app che ha lanciato l'analisi
 # Programmi di analisi delle altre app che usano il modello (vedi i loro app.py).
-ALTRI_PROGRAMMI = {"Vertov": "descrittore_inquadrature/descrivi.py"}
+ALTRI_PROGRAMMI = {"Vertov": "vertov/descrivi.py"}
 PROGRAMMA = "murnau/murnau.py"
 
 
