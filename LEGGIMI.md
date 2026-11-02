@@ -72,7 +72,7 @@ Su M5 Max servono circa 0,5 secondi a fotogramma per oggetti e volti e circa 8 s
 
 ## File di lavoro ed esportazioni
 
-Murnau non scrive niente nella tua cartella finché non esporti. I file con cui lavora stanno in una cartella per sessione, con lo stesso nome della sessione, dentro `~/My Drive/CLAUDE/Murnau – file di lavoro/` (o `~/Library/Application Support/Murnau/Murnau – file di lavoro/` se `My Drive/CLAUDE` non c'è). La vedi con **Mostra** in Materiali o *File › Mostra i file di lavoro*:
+Murnau non scrive niente nella tua cartella finché non esporti. I file con cui lavora stanno dentro la cartella di Murnau, in `Murnau – file di lavoro/`, una cartella per sessione con lo stesso nome della sessione. La vedi con **Mostra** in Materiali o *File › Mostra i file di lavoro*. Git, il pacchetto degli aggiornamenti e l'installazione degli aggiornamenti la ignorano, quindi non finisce mai su GitHub e un aggiornamento non la tocca; se sposti o rinomini la cartella di Murnau, le sessioni ritrovano i loro file:
 
 - `segnalazioni.json` e `revisione.json`: le segnalazioni e le tue revisioni
 - `segnalazioni/`: fotogrammi e dettagli delle segnalazioni
@@ -81,7 +81,7 @@ Murnau non scrive niente nella tua cartella finché non esporti. I file con cui 
 
 Nella cartella in cui esporti (all'inizio quella del film) finiscono solo i file scelti in **Esporta**. Il report esportato contiene anche le immagini, quindi si apre e si invia da solo.
 
-All'avvio Murnau sposta nella cartella di lavoro i file che le versioni precedenti lasciavano nella cartella dei risultati: li sposta, non li cancella, e non tocca mai il film, il montaggio o i file di Vertov (anche il suo `marker_resolve.edl`, che inizia con «TITLE: Descrizioni inquadrature» invece che con «TITLE: Murnau»).
+All'avvio Murnau porta dentro la propria cartella le cartelle di lavoro create altrove dalle versioni precedenti (in `My Drive/CLAUDE` o in Application Support), e sposta nella cartella di lavoro i file che le versioni ancora più vecchie lasciavano nella cartella dei risultati: li sposta, non li cancella, e non tocca mai il film, il montaggio o i file di Vertov (anche il suo `marker_resolve.edl`, che inizia con «TITLE: Descrizioni inquadrature» invece che con «TITLE: Murnau»).
 
 ## Aggiornamenti
 

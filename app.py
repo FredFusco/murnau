@@ -45,10 +45,12 @@ ESTENSIONI_VIDEO = {".mov", ".mp4", ".mxf", ".m4v", ".avi", ".mkv"}
 ESTENSIONI_MONTAGGIO = {".edl", ".aaf"}
 TIPI_IMMAGINE = {".jpg": "image/jpeg", ".png": "image/png"}
 RUOLI = {"video": "Film", "montaggio": "Montaggio"}
-# I file con cui Murnau lavora (fotogrammi, rilevamenti, segnalazioni, revisione...) stanno qui, una
-# cartella per sessione. Nella cartella di destinazione scelta dall'utente finisce solo ciò che esporta.
-_DRIVE = Path.home() / "My Drive" / "CLAUDE"
-FILE_DI_LAVORO = (_DRIVE if _DRIVE.is_dir() else DATI) / "Murnau – file di lavoro"
+# I file con cui Murnau lavora (fotogrammi, rilevamenti, segnalazioni, revisione...) stanno qui, dentro
+# la cartella di Murnau, una cartella per sessione. Nella cartella di destinazione scelta dall'utente
+# finisce solo ciò che esporta. Git, il pacchetto degli aggiornamenti e l'installazione degli
+# aggiornamenti la ignorano (vedi .gitignore e aggiornamenti.INTOCCABILI).
+NOME_FILE_DI_LAVORO = "Murnau – file di lavoro"
+FILE_DI_LAVORO = CARTELLA / NOME_FILE_DI_LAVORO
 
 
 # --------------------------------------------------------------------------
@@ -105,8 +107,17 @@ def nome_per_file(testo: str) -> str:
 
 
 def _lavoro(p: dict) -> Path:
-    """La cartella di lavoro della sessione, senza crearla (una che non esiste se non è ancora assegnata)."""
-    return Path(p["cartella_lavoro"]) if p.get("cartella_lavoro") else Path("/nonesiste")
+    """La cartella di lavoro della sessione, senza crearla (una che non esiste se non è ancora assegnata).
+
+    Se il percorso registrato non c'è più ma la cartella con lo stesso nome sta dentro FILE_DI_LAVORO
+    (per esempio perché la cartella di Murnau è stata spostata o rinominata), si usa quella.
+    """
+    if not p.get("cartella_lavoro"):
+        return Path("/nonesiste")
+    registrata = Path(p["cartella_lavoro"])
+    if not registrata.exists() and (FILE_DI_LAVORO / registrata.name).is_dir():
+        return FILE_DI_LAVORO / registrata.name
+    return registrata
 
 
 def cartella_lavoro(p: dict) -> Path:
@@ -125,7 +136,7 @@ def cartella_lavoro(p: dict) -> Path:
         p["cartella_lavoro"] = str(c)
         if _file_sessione(p["id"]).exists():  # senza cambiare la sessione aperta
             _file_sessione(p["id"]).write_text(json.dumps(p, ensure_ascii=False, indent=1))
-    c = Path(p["cartella_lavoro"])
+    c = _lavoro(p)
     c.mkdir(parents=True, exist_ok=True)
     return c
 
@@ -191,7 +202,46 @@ def trasloca(p: dict) -> list:
     return spostati
 
 
+def riporta_dentro(p: dict) -> str:
+    """Porta la cartella di lavoro della sessione dentro FILE_DI_LAVORO, se sta altrove perché creata
+    da una versione precedente (in My Drive/CLAUDE o in Application Support) o perché la cartella di
+    Murnau è stata spostata. Restituisce cosa è successo, o "" se non c'era niente da fare."""
+    import shutil
+    if not p.get("cartella_lavoro"):
+        return ""
+    vecchia = Path(p["cartella_lavoro"])
+    if vecchia.parent == FILE_DI_LAVORO:
+        return ""
+    nuova = FILE_DI_LAVORO / vecchia.name
+    if vecchia.is_dir() and not nuova.exists():
+        FILE_DI_LAVORO.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(vecchia), str(nuova))
+        esito = f"cartella di lavoro spostata in {nuova}"
+    elif nuova.is_dir():
+        esito = f"cartella di lavoro ritrovata in {nuova}"
+    else:
+        return ""  # né la vecchia né la nuova: la sessione non ha ancora lavorato
+    p["cartella_lavoro"] = str(nuova)
+    # La cartella che conteneva le cartelle di lavoro, se ora è vuota, non serve più.
+    try:
+        rimasti = [x for x in vecchia.parent.iterdir() if x.name != ".DS_Store"]
+        if vecchia.parent.name == NOME_FILE_DI_LAVORO and not rimasti:
+            shutil.rmtree(vecchia.parent)
+    except OSError:
+        pass
+    return esito
+
+
 def trasloca_tutte() -> None:
+    for f in SESSIONI.glob("*.json"):
+        try:
+            p = json.loads(f.read_text())
+            esito = riporta_dentro(p)
+            if esito:
+                f.write_text(json.dumps(p, ensure_ascii=False, indent=1))
+                print(f"Sessione {p.get('nome')}: {esito}")
+        except Exception as e:
+            print(f"Sessione {f.stem}: cartella di lavoro non spostata ({e})")
     for f in SESSIONI.glob("*.json"):
         try:
             p = json.loads(f.read_text())
@@ -1112,7 +1162,9 @@ def main():
         subprocess.run(["osascript", "-e", 'tell application "System Events" to set frontmost of '
                         '(first process whose name is "Murnau") to true'], capture_output=True)
         return
-    trasloca_tutte()  # i file di lavoro lasciati dalle versioni precedenti nelle cartelle dei risultati
+    # Prima che qualcosa possa scrivere: le cartelle di lavoro vanno dentro la cartella di Murnau, e
+    # i file lasciati dalle versioni precedenti nelle cartelle dei risultati vanno nelle cartelle di lavoro.
+    trasloca_tutte()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     identita_mac()
     FINESTRA = webview.create_window(

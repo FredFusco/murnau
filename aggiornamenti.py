@@ -45,7 +45,7 @@ REGISTRO = "https://registry.ollama.ai/v2"
 HF_CACHE = rilevatori.CACHE_HF
 OGNI = 24 * 3600  # controllo automatico al massimo una volta al giorno
 # Cartelle dell'app che un aggiornamento non tocca mai.
-INTOCCABILI = {"prova_risultati", "dist", "__pycache__"}
+INTOCCABILI = {"prova_risultati", "dist", "__pycache__", "Murnau – file di lavoro"}
 
 PROGRAMMI = {"ffmpeg": "estrae i fotogrammi dal film",
              "ollama": "fa girare Qwen3-VL sul Mac"}
