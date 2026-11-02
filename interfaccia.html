@@ -251,6 +251,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
     <nav>
       <button data-vista="analisi" class="attivo">Analisi<span class="in-corso" id="in-corso" hidden></span><span class="perc-tab" id="perc-tab" hidden></span></button>
       <button data-vista="segnalazioni">Segnalazioni<span class="conta" id="conta-tab" hidden></span></button>
+      <button data-vista="esporta">Esporta</button>
     </nav>
   </div>
 </header>
@@ -338,23 +339,26 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <option value="confermato">Confermate</option>
       <option value="falso">Falsi allarmi</option>
     </select>
-    <span class="spazio"></span>
-    <button class="bottone" data-comando="report" id="apri-report">Apri il report</button>
   </div>
   <p class="riepilogo" id="riepilogo"></p>
+  <div id="schede"></div>
+</section>
+
+<section id="vista-esporta" hidden>
   <div class="pannello esporta" id="esporta">
     <h2>Esporta</h2>
     <p class="spiega">Scegli i file che ti servono e premi <em>Esporta</em>: prendono il nome della sessione e i falsi allarmi restano fuori. Puoi riesportare quando vuoi, per esempio dopo aver rivisto altre segnalazioni.</p>
+    <p class="riepilogo" id="riepilogo-esporta"></p>
     <div class="formati" id="formati"></div>
     <div class="riga-esporta">
       <span class="etichetta">Nella cartella</span> <span class="percorso" id="percorso-out"></span>
       <button class="bottone piccolo" id="cambia-out">Cambia…</button>
       <span class="spazio"></span>
+      <button class="bottone" data-comando="report" id="apri-report" title="Il report così com'è ora, prima di esportarlo">Apri il report</button>
       <button class="bottone principale" id="esegui-esporta" disabled>Esporta</button>
     </div>
     <p class="esito-esporta" id="esito-esporta" aria-live="polite"></p>
   </div>
-  <div id="schede"></div>
 </section>
 </main>
 
@@ -450,10 +454,9 @@ function durata(s) {
 
 function mostraVista(v) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("attivo", b.dataset.vista === v));
-  $("#vista-analisi").hidden = v !== "analisi";
-  $("#vista-segnalazioni").hidden = v !== "segnalazioni";
+  for (const nome of ["analisi", "segnalazioni", "esporta"]) $("#vista-" + nome).hidden = v !== nome;
   try { localStorage.setItem("murnau-vista", v); } catch {}
-  if (v === "segnalazioni") caricaSegnalazioni();
+  if (v === "segnalazioni" || v === "esporta") caricaSegnalazioni();
 }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => mostraVista(b.dataset.vista));
 
@@ -734,7 +737,7 @@ async function aggiorna() {
     esportabile = !!s.esportabili;
     disegnaFormati();
     if (s.lavoro.esito && s.lavoro.sessione === progetto.id) mostraEsito(s.lavoro.esito);
-    if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden)) caricaSegnalazioni();
+    if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden || !$("#vista-esporta").hidden)) caricaSegnalazioni();
 
   } catch (e) { /* il server si sta chiudendo */ }
 }
@@ -758,10 +761,11 @@ async function murnauComando(nome) {
       case "aggiungi-cartella": mostraVista("analisi"); return clic('[data-sfoglia="cartella"]');
       case "report": case "lavoro": await api("/api/apri", {cosa: nome}); return;
       case "esporta":
-        mostraVista("segnalazioni"); $("#esporta").scrollIntoView({behavior: "smooth", block: "center"});
+        mostraVista("esporta");
         $("#esegui-esporta").focus(); return;
       case "vista-analisi": return mostraVista("analisi");
       case "vista-segnalazioni": return mostraVista("segnalazioni");
+      case "vista-esporta": return mostraVista("esporta");
       case "dettagli": mostraVista("analisi"); $("#dettagli").open = true; return;
       case "aggiornamenti": return cercaAggiornamenti(true);
       case "pulizia": return apriPulizia();
@@ -771,7 +775,7 @@ async function murnauComando(nome) {
       case "ferma": await api("/api/ferma", {}); return aggiorna();
     }
   } catch (e) {
-    if (["report", "lavoro"].includes(nome) && !$("#vista-segnalazioni").hidden) { testo($("#esito-esporta"), e.message); $("#esito-esporta").className = "esito-esporta errore"; }
+    if (nome === "report" && !$("#vista-esporta").hidden) { testo($("#esito-esporta"), e.message); $("#esito-esporta").className = "esito-esporta errore"; }
     else { mostraVista("analisi"); testo($("#esito-avvio"), e.message); }
   }
 }
@@ -889,6 +893,13 @@ function disegnaSegnalazioni() {
     ? `${tutte.length} segnalazioni su ${dati.inquadrature} inquadrature · ${conferme} confermate, ${falsi} falsi allarmi, ${tutte.length - conferme - falsi} da rivedere. ` +
       `I falsi allarmi vengono tolti dai marker e dal report.`
     : "";
+  // Nella scheda Esporta: cosa finirà nei file.
+  const daRivedere = tutte.length - conferme - falsi;
+  $("#riepilogo-esporta").textContent = !dati.creato ? "Non c'è ancora niente da esportare: prima analizza il film."
+    : !tutte.length ? "L'analisi non ha trovato errori: i file esportati saranno vuoti."
+    : `Nei file andranno ${tutte.length - falsi} segnalazioni su ${tutte.length}` +
+      (falsi ? ` (${falsi} ${falsi === 1 ? "falso allarme escluso" : "falsi allarmi esclusi"})` : "") +
+      (daRivedere ? `. ${daRivedere === 1 ? "Una è ancora da rivedere" : `${daRivedere} sono ancora da rivedere`}: puoi esportare comunque e riesportare dopo.` : ".");
   if (!tutte.length) {
     $("#schede").innerHTML = `<div class="vuoto">${dati.creato ? "Nessuna segnalazione: l'analisi non ha trovato errori." : "Nessuna analisi ancora in questa sessione: scegli il film e avvia l'analisi."}</div>`;
     return;

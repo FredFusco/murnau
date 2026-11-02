@@ -1068,6 +1068,7 @@ def crea_menu() -> list:
         Menu("Vista", [
             MenuAction("Analisi", _js("vista-analisi")),
             MenuAction("Segnalazioni", _js("vista-segnalazioni")),
+            MenuAction("Esporta", _js("vista-esporta")),
             MenuSeparator(),
             MenuAction("Dettagli dell'elaborazione", _js("dettagli")),
         ]),
@@ -1089,7 +1090,7 @@ def crea_menu() -> list:
 # Scorciatoie da tastiera dei menu: titolo -> (tasto, maiuscole)
 SCORCIATOIE = {
     "Nuova sessione": ("n", False), "Apri sessione…": ("o", False), "Salva sessione": ("s", False),
-    "Aggiungi materiali…": ("o", True), "Esporta…": ("e", False), "Analisi": ("1", False), "Segnalazioni": ("2", False),
+    "Aggiungi materiali…": ("o", True), "Esporta…": ("e", False), "Analisi": ("1", False), "Segnalazioni": ("2", False), "Esporta": ("3", False),
     "Analizza il film": ("r", False), "Ferma": (".", False), "Guida di Murnau": ("?", False),
 }
 
