@@ -207,6 +207,28 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
   .scheda { grid-template-columns: 1fr; }
   .fase { grid-template-columns: 110px 1fr; } .fase .eta { grid-column: 1 / -1; text-align: left; }
 }
+/* esporta */
+.esporta { margin-bottom: 16px; }
+.esporta .spiega { margin: 0 0 8px; }
+.formati { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 2px 18px; }
+.formato { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; align-items: baseline; padding: 6px 0; font-size: 14px; cursor: pointer; }
+.formato input { margin: 0; accent-color: var(--accento); }
+.formato .nome-esportato { grid-column: 2; font: 12px var(--mono); color: var(--tenue); overflow-wrap: anywhere; }
+.formato .spiega-formato { grid-column: 2; font-size: 12.5px; color: var(--tenue); }
+.formato.assente { opacity: .45; cursor: default; }
+.esporta .riga-esporta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--linea); font-size: 13.5px; }
+.esito-esporta { font-size: 13px; color: var(--tenue); }
+.esito-esporta.errore { color: var(--accento); }
+.esito-esporta button { margin-left: 6px; }
+/* esito di un lavoro finito */
+#finestra-esito .foglio { width: min(540px, 100%); }
+#finestra-esito .foglio-testa { border-bottom: 0; padding-bottom: 0; display: flex; gap: 12px; align-items: flex-start; }
+.icona-esito { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff; margin-top: 2px; }
+.icona-esito.ok { background: var(--ok); } .icona-esito.verifica { background: var(--avviso); } .icona-esito.errore { background: var(--accento); }
+#esito-titolo { margin: 0; font-size: 20px; }
+#esito-sotto { margin: 2px 0 0; font-size: 13.5px; color: var(--tenue); }
+#esito-punti { margin: 6px 0 0; padding-left: 20px; font-size: 14px; display: grid; gap: 6px; overflow-wrap: anywhere; }
+#esito-punti:empty { display: none; }
 </style>
 </head>
 <body>
@@ -270,7 +292,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
     <div class="scartati" id="scartati"></div>
     <div class="opzioni-materiali">
       <div><span class="etichetta">Timecode di inizio</span> <input type="text" id="tc-inizio" placeholder="dal file"> <span class="etichetta" style="font-size:12px">solo se il film non lo dichiara</span></div>
-      <div><span class="etichetta">I risultati vanno in</span> <span class="percorso" id="percorso-out"></span> <button class="bottone piccolo" id="cambia-out">Cambia…</button></div>
+      <div><span class="etichetta">I file con cui Murnau lavora stanno in</span> <span class="percorso" id="percorso-lavoro"></span> <button class="bottone piccolo" data-comando="lavoro">Mostra</button></div>
     </div>
   </div>
 
@@ -317,17 +339,40 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <option value="falso">Falsi allarmi</option>
     </select>
     <span class="spazio"></span>
-    <button class="bottone" data-comando="avid" title="Mostra il file nel Finder: in Media Composer, finestra Markers › Import Markers">Marker per Avid</button>
-    <button class="bottone" data-comando="resolve" title="In Resolve: Timeline › Importa › Marker della timeline da EDL">Marker per Resolve</button>
-    <button class="bottone" data-comando="report">Report</button>
-    <button class="bottone" data-comando="csv">Foglio di calcolo</button>
-    <button class="bottone" data-comando="cartella">Cartella</button>
+    <button class="bottone" data-comando="report" id="apri-report">Apri il report</button>
   </div>
   <p class="riepilogo" id="riepilogo"></p>
-  <p class="errore" id="esito-esporta"></p>
+  <div class="pannello esporta" id="esporta">
+    <h2>Esporta</h2>
+    <p class="spiega">Scegli i file che ti servono e premi <em>Esporta</em>: prendono il nome della sessione e i falsi allarmi restano fuori. Puoi riesportare quando vuoi, per esempio dopo aver rivisto altre segnalazioni.</p>
+    <div class="formati" id="formati"></div>
+    <div class="riga-esporta">
+      <span class="etichetta">Nella cartella</span> <span class="percorso" id="percorso-out"></span>
+      <button class="bottone piccolo" id="cambia-out">Cambia…</button>
+      <span class="spazio"></span>
+      <button class="bottone principale" id="esegui-esporta" disabled>Esporta</button>
+    </div>
+    <p class="esito-esporta" id="esito-esporta" aria-live="polite"></p>
+  </div>
   <div id="schede"></div>
 </section>
 </main>
+
+<!-- Esito di un'analisi finita: resta finché non si preme OK -->
+<div class="velo" id="finestra-esito" hidden role="alertdialog" aria-modal="true" aria-labelledby="esito-titolo" aria-describedby="esito-sotto">
+  <div class="foglio">
+    <div class="foglio-testa">
+      <div class="icona-esito" id="esito-icona" aria-hidden="true"></div>
+      <div><h2 id="esito-titolo"></h2><p id="esito-sotto"></p></div>
+    </div>
+    <div class="foglio-corpo"><ul id="esito-punti"></ul></div>
+    <div class="foglio-piede">
+      <button class="bottone" id="esito-dettagli" hidden>Dettagli dell'elaborazione</button>
+      <button class="bottone" id="esito-segnalazioni" hidden>Vedi le segnalazioni</button>
+      <button class="bottone principale" id="esito-ok">OK</button>
+    </div>
+  </div>
+</div>
 
 <!-- Libera spazio -->
 <div class="velo" id="finestra-pulizia" hidden role="dialog" aria-modal="true" aria-labelledby="titolo-pulizia">
@@ -461,8 +506,8 @@ function confermaElimina(riga, s) {
   const spunta = crea("label", "spunta");
   const cb = crea("input"); cb.type = "checkbox";
   spunta.append(cb, document.createTextNode(s.segnalazioni != null
-    ? ` Sposta nel Cestino anche i risultati (${s.segnalazioni} segnalazioni, revisioni, marker, fotogrammi)`
-    : " Sposta nel Cestino anche i risultati di Murnau"));
+    ? ` Sposta nel Cestino anche i file di lavoro (${s.segnalazioni} segnalazioni, revisioni, fotogrammi) e i file esportati`
+    : " Sposta nel Cestino anche i file di lavoro e i file esportati"));
   const az = crea("div", "azioni");
   const ok = crea("button", "bottone piccolo pericolo", "Elimina");
   const no = crea("button", "bottone piccolo", "Annulla");
@@ -491,7 +536,7 @@ document.addEventListener("click", e => {
 function nomeFile(p) { return p.split("/").filter(Boolean).pop(); }
 function disegnaProgetto() {
   const p = progetto;
-  const firma = JSON.stringify([p.video, p.montaggio, p.scartati, p.out, p.info, mancanti]);
+  const firma = JSON.stringify([p.video, p.montaggio, p.scartati, p.out, p.cartella_lavoro, p.info, mancanti]);
   if (firma !== firmaMateriali) {
     firmaMateriali = firma;
     const info = p.info || {};
@@ -524,8 +569,12 @@ function disegnaProgetto() {
       sc.appendChild(d);
     }
     const out = $("#percorso-out");
-    out.textContent = p.out || "verrà proposta accanto al film";
+    out.textContent = p.out || "accanto al film";
     out.classList.toggle("vuoto", !p.out);
+    const lavoro = $("#percorso-lavoro");
+    lavoro.textContent = p.cartella_lavoro ? p.cartella_lavoro.split("/").slice(-2).join(" › ") : "una cartella per sessione, creata quando aggiungi il film";
+    lavoro.title = p.cartella_lavoro || "";
+    lavoro.classList.toggle("vuoto", !p.cartella_lavoro);
   }
   if (document.activeElement !== $("#tc-inizio")) $("#tc-inizio").value = p.tc_inizio || "";
   if (document.activeElement !== $("#nome-sessione")) $("#nome-sessione").value = p.nome || "";
@@ -573,8 +622,8 @@ document.querySelectorAll("[data-sfoglia]").forEach(b => b.onclick = async () =>
   } catch (e) { testo($("#esito-arrivo"), e.message); }
 });
 $("#cambia-out").onclick = async () => {
-  progetto = (await api("/api/cartella-risultati", {})).progetto;
-  firmaDati = ""; disegnaProgetto(); caricaSegnalazioni();
+  progetto = (await api("/api/cartella-esporta", {})).progetto;
+  firmaMateriali = ""; disegnaProgetto();
 };
 $("#tc-inizio").onchange = e => api("/api/progetto", {tc_inizio: e.target.value});
 document.querySelectorAll("input[name=precisione]").forEach(r => r.onchange = () => api("/api/progetto", {accurato: r.value === "accurata"}));
@@ -620,7 +669,7 @@ function disegnaLavoro(l) {
   const nomeFase = (FASI.find(f => f[0] === l.fase) || [, l.fase === "avvio" || l.fase === "preparazione" ? "Preparazione" : ""])[1];
   $("#tempo-restante").innerHTML = finito ? "<b>Completata</b>"
     : l.attivo && l.attesa ? `<span class="attesa">${esc(l.attesa)}</span> · riparte da sola`
-    : !l.attivo ? (l.codice === 0 ? "" : "<b>Interrotta</b> · rilanciandola riprende da qui")
+    : !l.attivo ? (l.fermata ? "<b>Fermata</b> · rilanciandola riprende da qui" : l.codice === 0 ? "" : "<b>Interrotta per un errore</b> · rilanciandola riprende da qui")
     : c.eta == null ? "<b>Calcolo il tempo…</b>" : `mancano circa <b>${durata(c.eta)}</b>`;
   testo($("#tempo-trascorso"), l.durata ? `${finito || !l.attivo ? "durata" : "trascorsi"} ${durata(l.durata)}` : "");
   testo($("#fase-attuale"), l.attivo && nomeFase ? `fase: ${nomeFase}` : "");
@@ -630,17 +679,17 @@ function disegnaLavoro(l) {
     const corrente = !finito && i === indice;
     let perc = fatta ? 100 : a ? 100 * a.fatti / Math.max(1, a.totale) : 0;
     let eta = fatta ? "fatto" : corrente ? (a ? `${Math.floor(perc)}% · ${a.fatti} di ${a.totale}${a.eta ? " · " + durata(a.eta) : ""}` : "in corso…") : "";
-    if (corrente && !l.attivo) eta = l.codice === 0 ? "" : "interrotta";
+    if (corrente && !l.attivo) eta = l.fermata ? "fermata" : l.codice === 0 ? "" : "interrotta";
     return `<div class="fase ${fatta ? "fatta" : ""} ${corrente ? "corrente" : ""}"><span>${nome}</span>
       <div class="barra"><div style="width:${perc}%"></div></div><span class="eta">${eta}</span></div>`;
   }).join("");
   const pre = $("#log"), giu = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 5;
   pre.textContent = l.log.join("\n");
   if (giu) pre.scrollTop = pre.scrollHeight;
-  if (!l.attivo && l.codice && l.codice > 0) {
-    testo($("#esito-avvio"), "L'analisi si è interrotta: " + (l.log.slice(-1)[0] || "errore sconosciuto"));
-    $("#dettagli").open = true;
-  }
+  // Fermare non è un errore: il messaggio non è in rosso.
+  $("#esito-avvio").className = !l.attivo && l.fermata ? "sottotitolo" : "errore";
+  if (!l.attivo && l.fermata) testo($("#esito-avvio"), "Analisi fermata. Puoi riprenderla quando vuoi: riparte da dove era arrivata.");
+  else if (!l.attivo && l.codice) testo($("#esito-avvio"), "L'analisi si è interrotta per un errore: il motivo è nel riquadro e nei dettagli.");
 }
 
 function disegnaEsterne(esterne) {
@@ -675,15 +724,18 @@ async function aggiorna() {
     const s = await api("/api/stato");
     const prima = stato;
     stato = s;
-    if (!prima) disegnaCategorie(s.categorie);
+    if (!prima) { disegnaCategorie(s.categorie); disegnaSegnalazioni(); }  // i filtri hanno bisogno delle categorie
     if (prima && prima.progetto.id !== s.progetto.id) firmaDati = "";
     progetto = s.progetto; mancanti = s.mancanti;
     disegnaProgetto();
     disegnaLavoro(s.lavoro);
     disegnaPrerequisiti(s);
     disegnaEsterne(s.esterne || []);
+    esportabile = !!s.esportabili;
+    disegnaFormati();
+    if (s.lavoro.esito && s.lavoro.sessione === progetto.id) mostraEsito(s.lavoro.esito);
     if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden)) caricaSegnalazioni();
-    if (prima && prima.lavoro.attivo && !s.lavoro.attivo && s.lavoro.codice === 0 && s.lavoro.sessione === progetto.id) mostraVista("segnalazioni");
+
   } catch (e) { /* il server si sta chiudendo */ }
 }
 
@@ -704,9 +756,10 @@ async function murnauComando(nome) {
       }
       case "aggiungi-file": mostraVista("analisi"); return clic('[data-sfoglia="file"]');
       case "aggiungi-cartella": mostraVista("analisi"); return clic('[data-sfoglia="cartella"]');
-      case "report": case "avid": case "resolve": case "csv": case "cartella":
-        testo($("#esito-esporta"), "");
-        await api("/api/apri", {cosa: nome}); return;
+      case "report": case "lavoro": await api("/api/apri", {cosa: nome}); return;
+      case "esporta":
+        mostraVista("segnalazioni"); $("#esporta").scrollIntoView({behavior: "smooth", block: "center"});
+        $("#esegui-esporta").focus(); return;
       case "vista-analisi": return mostraVista("analisi");
       case "vista-segnalazioni": return mostraVista("segnalazioni");
       case "dettagli": mostraVista("analisi"); $("#dettagli").open = true; return;
@@ -718,12 +771,90 @@ async function murnauComando(nome) {
       case "ferma": await api("/api/ferma", {}); return aggiorna();
     }
   } catch (e) {
-    if (["report", "avid", "resolve", "csv", "cartella"].includes(nome) && !$("#vista-segnalazioni").hidden) testo($("#esito-esporta"), e.message);
+    if (["report", "lavoro"].includes(nome) && !$("#vista-segnalazioni").hidden) { testo($("#esito-esporta"), e.message); $("#esito-esporta").className = "esito-esporta errore"; }
     else { mostraVista("analisi"); testo($("#esito-avvio"), e.message); }
   }
 }
 document.querySelectorAll("[data-comando]").forEach(b => b.onclick = () => murnauComando(b.dataset.comando));
 $("#ferma").onclick = () => murnauComando("ferma");
+
+/* ---------- esporta ---------- */
+// I formati scelti, con il nome della sessione, nella cartella di destinazione.
+const FORMATI = {
+  avid: ["Marker per Avid Media Composer", "marker Avid.txt", "In Media Composer: finestra Markers › menu › Import Markers."],
+  resolve: ["Marker per DaVinci Resolve", "marker Resolve.edl", "In Resolve: Timeline › Importa › Marker della timeline da EDL."],
+  csv: ["Foglio di calcolo", "segnalazioni.csv", "Una riga per segnalazione, per Excel, Numbers o Google Fogli."],
+  report: ["Report", "report.html", "Si apre nel browser, con fotogrammi e dettagli: si può inviare così com'è."],
+};
+const FORMATI_PREDEFINITI = ["avid", "report"];
+let esportabile = false, firmaFormati = "";
+function nomeSessioneFile(t) { return (t || "").replace(/[\\/:\x00-\x1f]/g, "-").replace(/^[ .]+|[ .]+$/g, "") || "Sessione"; }
+function disegnaFormati() {
+  const scelti = progetto.formati || FORMATI_PREDEFINITI;
+  const firma = JSON.stringify([esportabile, scelti, progetto.nome]);
+  if (firma === firmaFormati) return statoEsporta();
+  firmaFormati = firma;
+  $("#formati").replaceChildren(...Object.entries(FORMATI).map(([chiave, [nome, suffisso, spiega]]) => {
+    const etichetta = crea("label", "formato" + (esportabile ? "" : " assente"));
+    const cb = crea("input"); cb.type = "checkbox"; cb.value = chiave; cb.disabled = !esportabile;
+    cb.checked = esportabile && scelti.includes(chiave);
+    cb.onchange = statoEsporta;
+    etichetta.append(cb, crea("b", "", nome), crea("span", "nome-esportato", `${nomeSessioneFile(progetto.nome)} - ${suffisso}`),
+      crea("span", "spiega-formato", esportabile ? spiega : "Sarà disponibile dopo l'analisi."));
+    return etichetta;
+  }));
+  statoEsporta();
+}
+function formatiScelti() { return [...document.querySelectorAll("#formati input:checked")].map(c => c.value); }
+function statoEsporta() {
+  $("#esegui-esporta").disabled = !formatiScelti().length || !!(stato && stato.lavoro.attivo);
+  $("#apri-report").disabled = !esportabile;
+}
+$("#esegui-esporta").onclick = async () => {
+  const esito = $("#esito-esporta");
+  esito.className = "esito-esporta"; testo(esito, "");
+  try {
+    const r = await api("/api/esporta", {formati: formatiScelti()});
+    progetto.formati = formatiScelti(); firmaFormati = "";
+    esito.replaceChildren(`Esportat${r.creati.length === 1 ? "o 1 file" : "i " + r.creati.length + " file"} in ${r.cartella.split("/").pop()}.`);
+    const mostra = crea("button", "bottone piccolo", "Mostra nel Finder");
+    mostra.onclick = () => api("/api/apri", {file: r.creati}).catch(e => testo(esito, e.message));
+    esito.appendChild(mostra);
+  } catch (e) { esito.className = "esito-esporta errore"; testo(esito, e.message); }
+};
+
+/* ---------- riquadro con l'esito di un'analisi finita: compare finché non si preme OK ---------- */
+let esitoMostrato = null;
+function mostraEsito(e) {
+  const firma = JSON.stringify(e);
+  if (!e || firma === esitoMostrato) return;
+  esitoMostrato = firma;
+  const icone = {ok: "✓", verifica: "!", errore: "×"};
+  const trovate = e.segnalazioni == null ? "" : e.segnalazioni === 0 ? " Nessuna segnalazione: non sono stati trovati errori di ripresa."
+    : ` ${e.segnalazioni === 1 ? "C'è 1 segnalazione" : `Ci sono ${e.segnalazioni} segnalazioni`} da rivedere nella scheda Segnalazioni.`;
+  const sotto = {ok: "Tutto è andato a buon fine, senza errori." + trovate,
+                 verifica: "L'analisi è finita, ma ci sono cose da verificare:", errore: ""};
+  const icona = $("#esito-icona"); icona.className = "icona-esito " + e.stato; icona.textContent = icone[e.stato];
+  testo($("#esito-titolo"), e.stato === "verifica" ? e.titolo + ", con cose da verificare" : e.titolo);
+  testo($("#esito-sotto"), sotto[e.stato]);
+  const punti = [...e.punti];
+  if (e.stato === "verifica" && trovate) punti.push(trovate.trim());
+  $("#esito-punti").replaceChildren(...punti.map(p => crea("li", "", p)));
+  $("#esito-segnalazioni").hidden = !e.segnalazioni;
+  $("#esito-dettagli").hidden = e.stato !== "errore";
+  $("#finestra-esito").hidden = false;
+  $("#esito-ok").focus();
+}
+async function chiudiEsito() {
+  $("#finestra-esito").hidden = true;
+  try { await api("/api/esito-visto", {}); } catch { /* il server si sta chiudendo */ }
+}
+$("#esito-ok").onclick = chiudiEsito;
+$("#esito-segnalazioni").onclick = async () => { await chiudiEsito(); mostraVista("segnalazioni"); };
+$("#esito-dettagli").onclick = async () => { await chiudiEsito(); mostraVista("analisi"); $("#dettagli").open = true; $("#dettagli").scrollIntoView({block: "center"}); };
+document.addEventListener("keydown", e => {
+  if (!$("#finestra-esito").hidden && (e.key === "Escape" || e.key === "Enter")) { e.preventDefault(); chiudiEsito(); }
+});
 
 /* ---------- segnalazioni ---------- */
 async function caricaSegnalazioni() {

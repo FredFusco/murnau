@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guida di Murnau</title>
+<style>
+:root { --fondo:#f3f1ec; --inchiostro:#1c1c21; --tenue:#6c6b72; --linea:#dcd8cf; --accento:#c8372d; }
+@media (prefers-color-scheme: dark) { :root { --fondo:#141418; --inchiostro:#ecebe6; --tenue:#9d9ca6; --linea:#33333d; --accento:#ff5f52; } }
+body { margin:0; background:var(--fondo); color:var(--inchiostro); font:15px/1.6 -apple-system,"Helvetica Neue",sans-serif; }
+main { max-width:720px; margin:0 auto; padding:28px 20px 60px; }
+h1 { font-size:30px; margin:0 0 4px; letter-spacing:-.01em; }
+.sotto { color:var(--tenue); margin:0 0 20px; }
+h2 { font-size:19px; margin:28px 0 8px; padding-top:10px; border-top:1px solid var(--linea); }
+kbd { font:12px ui-monospace,Menlo,monospace; border:1px solid var(--linea); border-radius:5px; padding:1px 5px; }
+li { margin:4px 0; }
+.nota { border-left:3px solid var(--accento); padding-left:12px; color:var(--tenue); }
+</style></head><body><main>
+<h1>Guida di Murnau</h1>
+<p class="sotto">Cerca gli errori di ripresa in un film montato. Tutto su questo Mac.</p>
+
+<h2>In tre gesti</h2>
+<ol>
+  <li><b>Trascina il film</b> (lo scarico dell'Avid) e, se puoi, l'<b>EDL o l'AAF</b> della sequenza nei riquadri di <i>Materiali</i>.</li>
+  <li><b>Scegli cosa cercare</b> e la precisione, poi premi <b>«Analizza il film»</b> <kbd>⌘R</kbd>. Puoi seguire la percentuale e il tempo che manca, anche sull'icona del Dock.</li>
+  <li><b>Alla fine</b> un suono ti avvisa e compare un riquadro con l'esito: tutto a posto, cose da verificare o un errore che ha interrotto il lavoro. Poi rivedi le segnalazioni e, in <i>Segnalazioni › Esporta</i>, scegli i file che ti servono e premi <b>Esporta</b>.</li>
+</ol>
+
+<h2>Cosa cerca</h2>
+<ul>
+  <li><b>Troupe o attrezzatura in campo</b>: boom, macchina da presa, cavalletti, stativi, luci da set, operatori.</li>
+  <li><b>Troupe nei riflessi</b>: specchi, vetri, finestre, occhiali, carrozzerie.</li>
+  <li><b>Sguardi in macchina</b> di attori e comparse.</li>
+  <li><b>Microfoni lavalier</b> visibili sugli attori.</li>
+  <li><b>Prese elettriche e cavi</b> a terra o sulle pareti.</li>
+</ul>
+
+<h2>Rivedere le segnalazioni</h2>
+<p>Ogni segnalazione mostra il timecode, il fotogramma con un riquadro rosso e il dettaglio ingrandito. Segnala <b>Errore confermato</b> o <b>Falso allarme</b> e, se vuoi, scrivi una nota: finisce nel marker. I falsi allarmi restano fuori dai file esportati.</p>
+
+<h2>Esportare</h2>
+<p>In <i>Segnalazioni › Esporta</i> (o <i>File › Esporta…</i> <kbd>⌘E</kbd>) scegli cosa ti serve: marker per Avid Media Composer, marker per DaVinci Resolve, foglio di calcolo, report. Premendo <b>Esporta</b> i file vanno nella cartella indicata (all'inizio quella del film; puoi cambiarla), con il nome della sessione: per esempio <i>&lt;sessione&gt; - marker Avid.txt</i>. Murnau ricorda le tue scelte; dopo aver rivisto altre segnalazioni puoi riesportare e i file vengono aggiornati.</p>
+<p class="nota">In Media Composer: finestra <i>Markers</i>, menu della finestra, <i>Import Markers</i>. In Resolve: <i>Timeline › Importa › Marker della timeline da EDL</i>.</p>
+
+<h2>File di lavoro</h2>
+<p>Per lavorare Murnau crea molti file suoi: fotogrammi, rilevamenti, segnalazioni, revisioni. Non finiscono nella tua cartella: stanno in <i>My Drive › CLAUDE › Murnau – file di lavoro</i>, una cartella per sessione con lo stesso nome (se rinomini la sessione, si rinomina anche la cartella). Li vedi con <b>Mostra</b> in Materiali o <i>File › Mostra i file di lavoro</i>. Non serve aprirli: servono a Murnau per riprendere il lavoro, rivedere e riesportare. <i>Libera spazio…</i> può cancellare i fotogrammi, che si ricreano se servono.</p>
+
+<h2>A fine lavoro</h2>
+<p>Il riquadro con l'esito resta finché non premi <b>OK</b>, anche se chiudi e riapri la pagina. Se qualcosa è da verificare (per esempio inquadrature del montaggio fuori dal film, o fotogrammi che il modello non è riuscito a esaminare) lo trovi elencato lì. Se l'analisi si è interrotta per un errore, il riquadro spiega il motivo in parole semplici e il testo tecnico resta in <i>Dettagli dell'elaborazione</i>.</p>
+<p>Se premi <b>Ferma</b> <kbd>⌘.</kbd> o chiudi la finestra non è un errore: nessun riquadro, nessun suono. Rilanciando, l'analisi riprende da dove era arrivata.</p>
+
+<h2>Sessioni</h2>
+<p>Ogni film è una sessione: <i>Nuova</i> <kbd>⌘N</kbd>, <i>Apri…</i> <kbd>⌘O</kbd>, <i>Salva</i> <kbd>⌘S</kbd>. Eliminare una sessione non tocca mai il film né il montaggio; i file di lavoro e quelli esportati vanno nel Cestino solo se lo scegli.</p>
+
+<h2>Insieme a Vertov e Ozu</h2>
+<p>Le tre app usano lo stesso modello. Murnau dà la precedenza a Vertov: se un'analisi di Vertov è in corso aspetta («In attesa: Vertov sta usando il modello») e riparte da sola. A fine lavoro toglie il modello dalla memoria. Un'analisi lanciata da Terminale compare in cima alla scheda Analisi, con un pulsante <b>Ferma</b>.</p>
+
+<h2>Aggiornamenti e spazio</h2>
+<p><i>Aiuto › Cerca aggiornamenti…</i> controlla Murnau, ffmpeg e Ollama, le librerie e i modelli, e chiede prima di installare. <i>Libera spazio…</i> mostra quanto occupano i file temporanei e lascia scegliere cosa cancellare.</p>
+</main></body></html>

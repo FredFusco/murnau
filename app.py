@@ -5,7 +5,9 @@ Apre una finestra propria (pywebview, WebKit di macOS) con l'interfaccia, servit
 da un piccolo server interno raggiungibile solo da questo computer. Fa scegliere
 il film e il montaggio, lancia l'analisi (murnau.py), ne mostra l'avanzamento
 e permette di rivedere le segnalazioni una per una ed esportare i marker.
-Ogni lavoro è una sessione salvata, che si può riaprire in seguito.
+Ogni lavoro è una sessione salvata, che si può riaprire in seguito. I file con cui Murnau
+lavora stanno in una cartella di lavoro per sessione; nella cartella scelta dall'utente
+finisce solo ciò che esporta.
 
     ~/.venvs/descrittore/bin/python app.py
 """
@@ -43,13 +45,18 @@ ESTENSIONI_VIDEO = {".mov", ".mp4", ".mxf", ".m4v", ".avi", ".mkv"}
 ESTENSIONI_MONTAGGIO = {".edl", ".aaf"}
 TIPI_IMMAGINE = {".jpg": "image/jpeg", ".png": "image/png"}
 RUOLI = {"video": "Film", "montaggio": "Montaggio"}
+# I file con cui Murnau lavora (fotogrammi, rilevamenti, segnalazioni, revisione...) stanno qui, una
+# cartella per sessione. Nella cartella di destinazione scelta dall'utente finisce solo ciò che esporta.
+_DRIVE = Path.home() / "My Drive" / "CLAUDE"
+FILE_DI_LAVORO = (_DRIVE if _DRIVE.is_dir() else DATI) / "Murnau – file di lavoro"
 
 
 # --------------------------------------------------------------------------
 # Sessioni
 # --------------------------------------------------------------------------
-# Una sessione è un progetto di lavoro: il film, il montaggio, la cartella dei
-# risultati, le opzioni e un nome. Ogni modifica viene salvata subito.
+# Una sessione è un progetto di lavoro: il film, il montaggio, la sua cartella di
+# lavoro, la cartella in cui esportare, le opzioni e un nome. Ogni modifica viene
+# salvata subito.
 
 def _file_sessione(id_: str) -> Path:
     return SESSIONI / f"{id_}.json"
@@ -92,9 +99,108 @@ def salva_progetto(p: dict) -> None:
     _scrivi_sessione(p)
 
 
-# File che Murnau crea nella cartella dei risultati: solo questi vengono tolti eliminando una sessione.
-FILE_DI_MURNAU = ["segnalazioni.json", "revisione.json", "segnalazioni.csv", "marker_avid.txt",
-                  "marker_resolve.edl", "report_murnau.html", "segnalazioni", "lavoro"]
+def nome_per_file(testo: str) -> str:
+    """Il nome della sessione reso adatto a un nome di file o cartella."""
+    return re.sub(r'[/:\\\x00-\x1f]', "-", testo or "").strip(" .") or "Sessione"
+
+
+def _lavoro(p: dict) -> Path:
+    """La cartella di lavoro della sessione, senza crearla (una che non esiste se non è ancora assegnata)."""
+    return Path(p["cartella_lavoro"]) if p.get("cartella_lavoro") else Path("/nonesiste")
+
+
+def cartella_lavoro(p: dict) -> Path:
+    """La cartella di lavoro della sessione: la assegna (dal nome della sessione) e la crea se serve."""
+    if not p.get("cartella_lavoro"):
+        usate = set()
+        for f in SESSIONI.glob("*.json"):
+            try:
+                usate.add(json.loads(f.read_text()).get("cartella_lavoro"))
+            except (OSError, ValueError):
+                pass
+        base = nome_per_file(p.get("nome"))
+        c, n = FILE_DI_LAVORO / base, 2
+        while c.exists() or str(c) in usate:
+            c, n = FILE_DI_LAVORO / f"{base} {n}", n + 1
+        p["cartella_lavoro"] = str(c)
+        if _file_sessione(p["id"]).exists():  # senza cambiare la sessione aperta
+            _file_sessione(p["id"]).write_text(json.dumps(p, ensure_ascii=False, indent=1))
+    c = Path(p["cartella_lavoro"])
+    c.mkdir(parents=True, exist_ok=True)
+    return c
+
+
+def rinomina_cartella_lavoro(p: dict) -> None:
+    """Dopo aver cambiato nome alla sessione, anche la sua cartella di lavoro prende il nuovo nome."""
+    vecchia = _lavoro(p)
+    nuova = FILE_DI_LAVORO / nome_per_file(p.get("nome"))
+    if not vecchia.is_dir() or nuova == vecchia or nuova.exists() or vecchia.parent != FILE_DI_LAVORO:
+        return
+    if LAVORO.attivo() and LAVORO.sessione == p["id"]:
+        return  # l'analisi in corso sta scrivendo lì: si rinomina alla prossima occasione
+    vecchia.rename(nuova)
+    p["cartella_lavoro"] = str(nuova)
+
+
+# File che Murnau creava nella cartella dei risultati, prima delle cartelle di lavoro.
+FILE_DI_MURNAU = ["lavoro", "segnalazioni", "segnalazioni.json", "revisione.json", "segnalazioni.csv",
+                  "marker_avid.txt", "marker_resolve.edl", "report_murnau.html"]
+
+
+def materiali_di(p: dict) -> set:
+    return {str(Path(x).resolve()) for x in [p.get("video"), p.get("montaggio")]
+            + [x["percorso"] for x in p.get("scartati", [])] if x}
+
+
+def da_traslocare(p: dict) -> list:
+    """(file nella cartella dei risultati, destinazione nella cartella di lavoro) dei file che le versioni
+    precedenti di Murnau lasciavano lì. Mai un materiale; mai un file di Vertov, che può usare la stessa
+    cartella e scriveva anche lui un marker_resolve.edl (il suo inizia con «TITLE: Descrizioni inquadrature»)."""
+    out = Path(p.get("out") or "/nonesiste")
+    if not out.is_dir() or (p.get("cartella_lavoro") and out == _lavoro(p)):
+        return []
+    if not (out / "segnalazioni.json").exists() and not (out / "lavoro" / "esame.jsonl").exists():
+        return []  # in questa cartella Murnau non ha mai lavorato
+    materiali, mosse = materiali_di(p), []
+    destinazione = _lavoro(p) if p.get("cartella_lavoro") else FILE_DI_LAVORO / nome_per_file(p.get("nome"))
+    for nome in FILE_DI_MURNAU:
+        f = out / nome
+        if not f.exists() or str(f.resolve()) in materiali:
+            continue
+        if nome == "marker_resolve.edl" and not f.read_text(errors="ignore").startswith("TITLE: Murnau"):
+            continue  # stesso nome, ma è il file di Vertov
+        mosse.append((f, destinazione / nome))
+    return mosse
+
+
+def trasloca(p: dict) -> list:
+    """Sposta nella cartella di lavoro i file che le versioni precedenti di Murnau lasciavano nella
+    cartella dei risultati. Spostati, non cancellati. La cartella dei risultati diventa quella in cui
+    esportare."""
+    import shutil
+    mosse = da_traslocare(p)
+    if not mosse:
+        return []
+    cartella_lavoro(p)
+    spostati = []
+    for f, dest in mosse:
+        if dest.exists():
+            continue  # c'è già una versione nella cartella di lavoro: non la si sovrascrive
+        shutil.move(str(f), str(dest))
+        spostati.append(f.name)
+    return spostati
+
+
+def trasloca_tutte() -> None:
+    for f in SESSIONI.glob("*.json"):
+        try:
+            p = json.loads(f.read_text())
+            spostati = trasloca(p)
+            if spostati:
+                f.write_text(json.dumps(p, ensure_ascii=False, indent=1))
+                print(f"Sessione {p.get('nome')}: spostati nella cartella di lavoro {', '.join(spostati)}")
+        except Exception as e:
+            print(f"Sessione {f.stem}: file di lavoro non spostati ({e})")
 
 
 def _nel_cestino(percorso: Path) -> None:
@@ -114,16 +220,19 @@ def elimina_sessione(id_: str, risultati: bool) -> dict:
     p = json.loads(_file_sessione(id_).read_text())
     altre = [json.loads(f.read_text()) for f in SESSIONI.glob("*.json") if f.stem != id_]
     spostati = []
-    if risultati and p.get("out") and Path(p["out"]).is_dir() and \
-            not any(a.get("out") == p["out"] for a in altre):
-        out = Path(p["out"])
-        materiali = {str(Path(x).resolve()) for x in (p.get("video"), p.get("montaggio")) if x}
-        for nome in FILE_DI_MURNAU:
-            f = out / nome
+    if risultati:
+        materiali = materiali_di(p)
+        if _lavoro(p).is_dir():
+            _nel_cestino(_lavoro(p))
+            spostati.append(_lavoro(p).name)
+        for x in p.get("esportati", []):
+            f = Path(x)
             if f.exists() and str(f.resolve()) not in materiali:  # mai un file scelto come materiale
                 _nel_cestino(f)
-                spostati.append(nome)
-        if out.exists() and not any(x for x in out.iterdir() if x.name != ".DS_Store"):
+                spostati.append(f.name)
+        out = Path(p.get("out") or "/nonesiste")
+        if out.is_dir() and not any(a.get("out") == p["out"] for a in altre) and \
+                not any(x for x in out.iterdir() if x.name != ".DS_Store"):
             _nel_cestino(out)  # la cartella era solo di Murnau ed è rimasta vuota
     _file_sessione(id_).unlink()
     # Se era la sessione aperta, si passa alla più recente (o a una nuova).
@@ -146,9 +255,9 @@ def elenco_sessioni() -> list:
         except (OSError, ValueError):
             continue
         segnalazioni = None
-        if p.get("out") and (Path(p["out"]) / "segnalazioni.json").exists():
+        if (_lavoro(p) / "segnalazioni.json").exists():
             try:
-                segnalazioni = len(json.loads((Path(p["out"]) / "segnalazioni.json").read_text())["segnalazioni"])
+                segnalazioni = len(json.loads((_lavoro(p) / "segnalazioni.json").read_text())["segnalazioni"])
             except (OSError, ValueError, KeyError):
                 pass
         elenco.append({"id": p["id"], "nome": p.get("nome", ""), "modificata": p.get("modificata", ""),
@@ -239,15 +348,17 @@ def assegna(p: dict, percorso: str, ruolo: str) -> None:
     """Mette un file in un ruolo, togliendolo da quello che aveva prima."""
     togli_materiale(p, percorso)
     if ruolo == "risultati":
-        p["out"] = percorso
+        # Un'analisi già fatta (cartella con segnalazioni.json): diventa la cartella di lavoro.
+        p["cartella_lavoro"] = percorso
         return
     p[ruolo] = percorso
     if ruolo == "video":
         video = Path(percorso)
         if not p.get("out"):
-            p["out"] = str(video.parent / f"Murnau - {video.stem}")
+            p["out"] = str(video.parent)  # le esportazioni, se non si sceglie altro, accanto al film
         if p.get("nome") in ("", "Nuova sessione"):
             p["nome"] = video.stem
+        cartella_lavoro(p)
 
 
 def aggiungi_materiali(p: dict, percorsi: list) -> list:
@@ -267,7 +378,7 @@ def aggiungi_materiali(p: dict, percorsi: list) -> list:
 
 
 def comando(p: dict) -> list:
-    cmd = [sys.executable, "-W", "ignore", str(CARTELLA / "murnau.py"), p["video"], "--out", p["out"],
+    cmd = [sys.executable, "-W", "ignore", str(CARTELLA / "murnau.py"), p["video"], "--out", str(cartella_lavoro(p)),
            "--categorie", ",".join(p.get("categorie") or rilevatori.CATEGORIE)]
     if p.get("montaggio"):
         cmd += ["--montaggio", p["montaggio"]]
@@ -297,6 +408,9 @@ class Lavoro:
         self.inizio_fase = 0.0
         self.mostrata = 0     # percentuale già mostrata: non deve mai tornare indietro
         self.attesa = ""      # perché l'analisi è ferma in attesa (es. Vertov usa il modello)
+        self.avvisi = []      # cose da verificare segnalate durante il lavoro (righe "@@avviso")
+        self.fermata = False  # fermata dall'utente (Ferma o chiusura della finestra), non un errore
+        self.esito = None     # com'è andata, da mostrare finché l'utente non preme OK
         self.codice = None
         self.sessione = ""
         self.blocco = threading.Lock()
@@ -315,6 +429,7 @@ class Lavoro:
             self.fase, self.avanz, self.piano, self.codice, self.sessione = "avvio", {}, {}, None, sessione
             self.mostrata = 0
             self.attesa = ""
+            self.avvisi, self.fermata, self.esito = [], False, None
             self.log.clear()
             self.inizio = time.time()
             self.processo = subprocess.Popen(
@@ -335,6 +450,9 @@ class Lavoro:
                 self.inizio_fase = time.time()
             elif riga.startswith("@@attesa"):
                 self.attesa = riga[len("@@attesa"):].strip()
+            elif riga.startswith("@@avviso "):
+                self.avvisi.append(riga.split(" ", 1)[1])
+                self.log.append(riga.split(" ", 1)[1])
             elif riga.startswith("@@piano "):
                 # Le fasi non ripetute restano come annunciate prima (es. i fotogrammi già estratti).
                 for voce in riga.split()[1:]:
@@ -349,7 +467,9 @@ class Lavoro:
                 self.log.append(riga)
         self.codice = self.processo.wait()
         self._impara()
-        avvisa_fine(self.codice)
+        if not self.fermata:
+            self.esito = esito_del_lavoro(self)
+            avvisa_fine(self.esito)
 
     def _misura(self, nome: str):
         """Secondi per unità della fase, misurati in questa analisi (None se non ancora misurabili)."""
@@ -380,6 +500,7 @@ class Lavoro:
         if not self.attivo():
             return
         processo = self.processo
+        self.fermata = True  # così l'uscita con il segnale di arresto non sembra un errore
         try:
             os.killpg(processo.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -451,6 +572,7 @@ class Lavoro:
             avanz[nome] = {"fatti": a["fatti"], "totale": a["totale"], "eta": eta}
         return {"attivo": self.attivo(), "fase": self.fase, "avanzamento": avanz, "codice": self.codice,
                 "complessivo": self.complessivo(), "attesa": self.attesa if self.attivo() else "",
+                "fermata": self.fermata, "esito": self.esito,
                 "sessione": self.sessione, "durata": time.time() - self.inizio if self.inizio else 0,
                 "log": list(self.log)[-40:]}
 
@@ -458,16 +580,53 @@ class Lavoro:
 LAVORO = Lavoro()
 
 
-def avvisa_fine(codice: int) -> None:
-    """Suono e notifica di macOS a fine analisi (non se l'ha fermata l'utente)."""
-    if codice == -signal.SIGTERM:
-        return
-    if codice == 0:
-        suono, testo = "/System/Library/Sounds/Glass.aiff", "Analisi completata: le segnalazioni sono pronte."
-    else:
-        suono, testo = "/System/Library/Sounds/Basso.aiff", "L'analisi si è interrotta con un errore."
+def _ultimo_errore(log: list) -> str:
+    """La riga che spiega l'errore: di solito l'ultima di un traceback di Python."""
+    righe = [r.strip() for r in log if r.strip() and not r.startswith("@@")]
+    riga = next((r for r in reversed(righe) if re.match(r"^[A-Za-z_.]*(Error|Exception)\b", r)),
+                righe[-1] if righe else "")
+    # Gli errori più comuni, detti in parole semplici (il testo tecnico resta nei dettagli).
+    if m := re.search(r"Command \['(ffprobe|ffmpeg)'.*'([^']+)'\] returned non-zero", riga):
+        return f"ffmpeg non riesce a leggere {Path(m.group(2)).name}: il file è danneggiato o non è un video."
+    if "ffmpeg non è riuscito a leggere il video" in riga:
+        return "ffmpeg non riesce a leggere il film: il file è danneggiato, incompleto o non è un video."
+    if m := re.match(r"FileNotFoundError: .*?'([^']+)'", riga):
+        return f"Non trovo {Path(m.group(1)).name}: è stato spostato o il disco è scollegato."
+    if "Connection refused" in riga or "URLError" in riga or "Ollama non è acceso" in riga:
+        return "Ollama non risponde: forse si è chiuso. Riaprilo (o riavvia il Mac) e rilancia."
+    if "Il montaggio non corrisponde al video" in riga:
+        return "Il montaggio (EDL o AAF) non corrisponde al film: forse sono di versioni diverse, o il " \
+               "timecode di inizio del film è sbagliato."
+    if "No space left" in riga:
+        return "Il disco è pieno: libera spazio (anche con «Libera spazio…») e rilancia."
+    return re.sub(r"^[A-Za-z_.]*(Error|Exception):\s*", "", riga)
+
+
+def esito_del_lavoro(l) -> dict:
+    """Com'è andata un'analisi finita da sola: senza errori, con cose da verificare o interrotta."""
+    if l.codice != 0:
+        motivo = _ultimo_errore(list(l.log))
+        return {"stato": "errore", "titolo": "L'analisi si è interrotta per un errore",
+                "punti": ([f"Motivo: {motivo}"] if motivo else []) +
+                         ["Il lavoro fatto fin qui è salvato: rilanciandola riprende da dove era arrivata.",
+                          "Il testo tecnico è in «Dettagli dell'elaborazione»."], "segnalazioni": None}
+    try:
+        p = json.loads(_file_sessione(l.sessione).read_text())
+        segnalazioni = len(json.loads((_lavoro(p) / "segnalazioni.json").read_text())["segnalazioni"])
+    except (OSError, ValueError, KeyError):
+        segnalazioni = None
+    punti = list(dict.fromkeys(l.avvisi))
+    return {"stato": "verifica" if punti else "ok", "titolo": "Analisi del film completata", "punti": punti,
+            "segnalazioni": segnalazioni}
+
+
+def avvisa_fine(esito: dict) -> None:
+    """Suono e notifica di macOS quando un'analisi finisce da sola (non se l'ha fermata l'utente).
+    Nella finestra di Murnau compare poi il riquadro con l'esito, da chiudere con OK."""
+    suono = "/System/Library/Sounds/" + ("Basso.aiff" if esito["stato"] == "errore" else "Glass.aiff")
+    testo = esito["titolo"] + (": ci sono cose da verificare." if esito["stato"] == "verifica" else ".")
     subprocess.Popen(["afplay", suono])
-    subprocess.Popen(["osascript", "-e", f'display notification "{testo}" with title "Murnau"'])
+    subprocess.Popen(["osascript", "-e", f'display notification {json.dumps(testo)} with title "Murnau"'])
 
 
 # --------------------------------------------------------------------------
@@ -495,6 +654,45 @@ def rivedi(out: Path, ident: str, stato: str = None, nota: str = None) -> None:
             revisione.pop("note:" + ident, None)
     (out / "revisione.json").write_text(json.dumps(revisione, ensure_ascii=False, indent=1), encoding="utf-8")
     esporta.tutto(out)
+
+
+# Cosa si può esportare: file nella cartella di lavoro e come si chiama, una volta esportato,
+# dopo il nome della sessione.
+ESPORTAZIONI = {
+    "csv": ("segnalazioni.csv", "segnalazioni.csv"),
+    "avid": ("marker_avid.txt", "marker Avid.txt"),
+    "resolve": ("marker_resolve.edl", "marker Resolve.edl"),
+    "report": ("report_murnau.html", "report.html"),
+}
+
+
+def esporta_file(p: dict, formati: list) -> list:
+    """Copia nella cartella di destinazione i formati scelti, con il nome della sessione."""
+    import shutil
+    if not formati:
+        raise RuntimeError("Scegli almeno un tipo di file da esportare.")
+    if not p.get("out"):
+        raise RuntimeError("Scegli prima la cartella in cui esportare.")
+    lavoro = _lavoro(p)
+    if not (lavoro / "segnalazioni.json").exists():
+        raise RuntimeError("Non c'è ancora niente da esportare: prima analizza il film.")
+    esporta.tutto(lavoro)  # i file della cartella di lavoro, aggiornati con l'ultima revisione
+    dest = Path(p["out"])
+    dest.mkdir(parents=True, exist_ok=True)
+    materiali, creati = materiali_di(p), []
+    for f in formati:
+        sorgente, suffisso = ESPORTAZIONI[f]
+        file = dest / f"{nome_per_file(p.get('nome'))} - {suffisso}"
+        if str(file.resolve()) in materiali:  # mai sovrascrivere un materiale
+            raise RuntimeError(f"{file.name} è uno dei materiali della sessione: scegli un'altra cartella.")
+        if f == "report":
+            # Il report esportato porta con sé le immagini: si apre anche lontano dalla cartella di lavoro.
+            dati, revisione = esporta.leggi(lavoro)
+            esporta.scrivi_report(lavoro, dati, revisione, destinazione=file)
+        else:
+            shutil.copyfile(lavoro / sorgente, file)
+        creati.append(str(file))
+    return creati
 
 
 FINESTRA = None  # la finestra dell'app, per le finestre di scelta dei file
@@ -537,9 +735,11 @@ class Gestore(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         p = carica_progetto()
-        out = Path(p["out"]) if p.get("out") else None
+        out = _lavoro(p)
         if url.path == "/":
             self._invia((CARTELLA / "interfaccia.html").read_bytes(), "text/html; charset=utf-8")
+        elif url.path == "/aiuto":
+            self._invia((CARTELLA / "aiuto.html").read_bytes(), "text/html; charset=utf-8")
         elif url.path == "/icona.png":
             self._invia((CARTELLA / "icona_murnau.png").read_bytes(), "image/png")
         elif url.path == "/api/stato":
@@ -556,19 +756,20 @@ class Gestore(BaseHTTPRequestHandler):
                                 "attesa": a.get("attesa", ""), "out": a.get("out", "")})
             self._json({"progetto": p, "lavoro": LAVORO.stato(), "mancanti": mancanti, "esterne": esterne,
                         "ollama": rilevatori.ollama_pronto(""), "modello": rilevatori.ollama_pronto(MODELLO),
-                        "risultati": bool(out and (out / "segnalazioni.json").exists()),
+                        "risultati": (out / "segnalazioni.json").exists(),
+                        "esportabili": (out / "segnalazioni.json").exists(),
                         "categorie": rilevatori.CATEGORIE})
         elif url.path == "/api/sessioni":
             self._json({"corrente": p["id"], "sessioni": elenco_sessioni()})
         elif url.path == "/api/segnalazioni":
-            self._json(leggi_segnalazioni(out) if out else {"segnalazioni": [], "revisione": {}})
+            self._json(leggi_segnalazioni(out))
         elif url.path == "/api/aggiornamenti":
             self._json({"installazione": aggiornamenti.INSTALLAZIONE, "versione": aggiornamenti.versione(),
                         "automatico": aggiornamenti.leggi_stato().get("automatico", True)})
         elif url.path == "/api/pulizia":
             self._json({"voci": pulizia.voci(MODELLO)})
-        elif url.path == "/file" and out:
-            # Solo le immagini dentro la cartella dei risultati.
+        elif url.path == "/file":
+            # Solo le immagini dentro la cartella di lavoro.
             relativo = parse_qs(url.query).get("p", [""])[0]
             percorso = (out / relativo).resolve()
             if out.resolve() in percorso.parents and percorso.suffix.lower() in TIPI_IMMAGINE and percorso.exists():
@@ -605,6 +806,7 @@ class Gestore(BaseHTTPRequestHandler):
                 elif azione == "salva":
                     if corpo.get("nome", "").strip():
                         p["nome"] = corpo["nome"].strip()
+                        rinomina_cartella_lavoro(p)
                     salva_progetto(p)
                 self._json({"ok": True, "progetto": p})
             elif url.path == "/api/sfoglia":
@@ -624,7 +826,7 @@ class Gestore(BaseHTTPRequestHandler):
                     p.get("info", {}).pop(corpo["percorso"], None)
                 salva_progetto(p)
                 self._json({"ok": True, "progetto": p})
-            elif url.path == "/api/cartella-risultati":
+            elif url.path == "/api/cartella-esporta":
                 scelto = scegli("cartella")
                 if scelto:
                     p["out"] = scelto
@@ -637,7 +839,6 @@ class Gestore(BaseHTTPRequestHandler):
                     raise RuntimeError("Il film non si trova più: trascinalo di nuovo nei materiali.")
                 if not p.get("categorie"):
                     raise RuntimeError("Scegli almeno un tipo di errore da cercare.")
-                Path(p["out"]).mkdir(parents=True, exist_ok=True)
                 LAVORO.avvia(comando(p), p["id"])
                 self._json({"ok": True})
             elif url.path == "/api/ferma":
@@ -650,7 +851,7 @@ class Gestore(BaseHTTPRequestHandler):
                 os.kill(pid, signal.SIGTERM)
                 self._json({"ok": True})
             elif url.path == "/api/rivedi":
-                rivedi(Path(p["out"]), corpo["id"], corpo.get("stato"), corpo.get("nota"))
+                rivedi(_lavoro(p), corpo["id"], corpo.get("stato"), corpo.get("nota"))
                 self._json({"ok": True})
             elif url.path == "/api/aggiornamenti":
                 azione = corpo.get("azione")
@@ -687,13 +888,32 @@ class Gestore(BaseHTTPRequestHandler):
                     subprocess.run(["open", "-a", "Console", str(REGISTRO)])
                     self._json({"ok": True})
                     return
-                out = Path(p.get("out") or "/nonesiste")
-                bersagli = {"cartella": out, "report": out / "report_murnau.html", "avid": out / "marker_avid.txt",
-                            "resolve": out / "marker_resolve.edl", "csv": out / "segnalazioni.csv"}
-                b = bersagli[cosa]
-                if not b.exists():
-                    raise RuntimeError("Non c'è ancora: viene creato alla fine dell'analisi.")
-                subprocess.run(["open", "-R", str(b)] if cosa in ("avid", "resolve") else ["open", str(b)])
+                # La cartella di lavoro, il report (quello della cartella di lavoro, con le immagini
+                # accanto) o la cartella di destinazione con selezionati i file appena esportati.
+                creati = [x for x in corpo.get("file", []) if x in p.get("esportati", []) and Path(x).exists()]
+                if cosa == "lavoro":
+                    subprocess.run(["open", str(cartella_lavoro(p))])
+                elif cosa == "report":
+                    if not (_lavoro(p) / "report_murnau.html").exists():
+                        raise RuntimeError("Il report non c'è ancora: viene creato alla fine dell'analisi.")
+                    subprocess.run(["open", str(_lavoro(p) / "report_murnau.html")])
+                elif creati:
+                    subprocess.run(["open", "-R", *creati])
+                elif p.get("out") and Path(p["out"]).is_dir():
+                    subprocess.run(["open", p["out"]])
+                else:
+                    raise RuntimeError("La cartella di destinazione non esiste.")
+                self._json({"ok": True})
+            elif url.path == "/api/esporta":
+                if corpo.get("cartella"):
+                    p["out"] = corpo["cartella"]
+                p["formati"] = [f for f in corpo.get("formati", []) if f in ESPORTAZIONI]
+                creati = esporta_file(p, p["formati"])
+                p["esportati"] = sorted(set(p.get("esportati", [])) | set(creati))
+                salva_progetto(p)
+                self._json({"ok": True, "creati": creati, "cartella": p["out"]})
+            elif url.path == "/api/esito-visto":
+                LAVORO.esito = None
                 self._json({"ok": True})
             else:
                 self.send_error(404)
@@ -769,6 +989,12 @@ def _js(comando: str):
     return azione
 
 
+def apri_aiuto():
+    import webview
+    webview.create_window("Guida di Murnau", f"http://127.0.0.1:{PORTA}/aiuto", width=820, height=820,
+                          background_color="#16161a", text_select=True)
+
+
 def apri_registro():
     subprocess.run(["open", "-a", "Console", str(REGISTRO)] if REGISTRO.exists() else ["open", str(DATI)])
 
@@ -786,10 +1012,8 @@ def crea_menu() -> list:
             MenuAction("Aggiungi una cartella…", _js("aggiungi-cartella")),
             MenuSeparator(),
             MenuAction("Apri il report", _js("report")),
-            MenuAction("Mostra i marker per Avid", _js("avid")),
-            MenuAction("Mostra i marker per Resolve", _js("resolve")),
-            MenuAction("Apri il foglio di calcolo", _js("csv")),
-            MenuAction("Apri la cartella dei risultati", _js("cartella")),
+            MenuAction("Esporta…", _js("esporta")),
+            MenuAction("Mostra i file di lavoro", _js("lavoro")),
         ]),
         Menu("Vista", [
             MenuAction("Analisi", _js("vista-analisi")),
@@ -802,6 +1026,8 @@ def crea_menu() -> list:
             MenuAction("Ferma", _js("ferma")),
         ]),
         Menu("Aiuto", [
+            MenuAction("Guida di Murnau", apri_aiuto),
+            MenuSeparator(),
             MenuAction("Cerca aggiornamenti…", _js("aggiornamenti")),
             MenuAction("Libera spazio…", _js("pulizia")),
             MenuSeparator(),
@@ -813,8 +1039,8 @@ def crea_menu() -> list:
 # Scorciatoie da tastiera dei menu: titolo -> (tasto, maiuscole)
 SCORCIATOIE = {
     "Nuova sessione": ("n", False), "Apri sessione…": ("o", False), "Salva sessione": ("s", False),
-    "Aggiungi materiali…": ("o", True), "Analisi": ("1", False), "Segnalazioni": ("2", False),
-    "Analizza il film": ("r", False), "Ferma": (".", False),
+    "Aggiungi materiali…": ("o", True), "Esporta…": ("e", False), "Analisi": ("1", False), "Segnalazioni": ("2", False),
+    "Analizza il film": ("r", False), "Ferma": (".", False), "Guida di Murnau": ("?", False),
 }
 
 
@@ -886,6 +1112,7 @@ def main():
         subprocess.run(["osascript", "-e", 'tell application "System Events" to set frontmost of '
                         '(first process whose name is "Murnau") to true'], capture_output=True)
         return
+    trasloca_tutte()  # i file di lavoro lasciati dalle versioni precedenti nelle cartelle dei risultati
     threading.Thread(target=server.serve_forever, daemon=True).start()
     identita_mac()
     FINESTRA = webview.create_window(

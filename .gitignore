@@ -6,6 +6,7 @@
 !.gitignore
 !*.py
 !interfaccia.html
+!aiuto.html
 !LEGGIMI.md
 !VERSIONE
 !aggiornamenti.json

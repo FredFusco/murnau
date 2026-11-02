@@ -15,10 +15,12 @@ Il film non esce dal computer. Gli unici collegamenti a internet servono a scari
 1. Apri **Murnau.app**.
 2. Trascina nella finestra lo scarico del film (`.mov`, `.mxf`, `.mp4`) e, se puoi, l'**EDL** o l'**AAF** della sequenza, anche insieme o in una cartella: Murnau li riconosce e li mette nei riquadri **Film** e **Montaggio**, con durata, fps, risoluzione e timecode o numero di eventi. Con il montaggio i tagli sono esatti e ogni segnalazione riporta la clip sorgente (con l'AAF anche scena, inquadratura e ciak dal bin). Se un file finisce nel riquadro sbagliato, usa **Usa come…** o **Togli**.
 3. Scegli cosa cercare e la precisione, poi premi **Analizza il film**.
-4. Nella scheda **Segnalazioni** rivedi ogni caso con **Errore confermato** o **Falso allarme**. Se vuoi, aggiungi una nota.
-5. Il pulsante **Marker per Avid** mostra nel Finder il file `marker_avid.txt`. In Media Composer apri la finestra *Markers*, poi nel menu della finestra scegli *Import Markers*: i marker compaiono sulla sequenza al timecode di ogni errore, colorati per categoria. I falsi allarmi sono esclusi.
+4. A fine lavoro, insieme al suono, compare un **riquadro con l'esito**: tutto a posto, cose da verificare (con l'elenco) o un errore che ha interrotto l'analisi (con il motivo in parole semplici; il testo tecnico resta in *Dettagli dell'elaborazione*). Resta finché non premi **OK**, anche se ricarichi la pagina.
+5. Nella scheda **Segnalazioni** rivedi ogni caso con **Errore confermato** o **Falso allarme**. Se vuoi, aggiungi una nota.
+6. Nel pannello **Esporta** (anche *File › Esporta…*, ⌘E) scegli i file che ti servono e la cartella, poi premi **Esporta**. I file prendono il nome della sessione: `<sessione> - marker Avid.txt`, `<sessione> - marker Resolve.edl`, `<sessione> - segnalazioni.csv`, `<sessione> - report.html`. I falsi allarmi sono esclusi. Murnau ricorda le scelte; dopo aver rivisto altre segnalazioni puoi riesportare.
+7. In Media Composer apri la finestra *Markers*, poi nel menu della finestra scegli *Import Markers* e il file `… - marker Avid.txt`: i marker compaiono sulla sequenza al timecode di ogni errore, colorati per categoria.
 
-Se fermi l'analisi o chiudi l'app, rilanciandola riprende dal punto in cui si era interrotta.
+Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suono. Rilanciando, l'analisi riprende dal punto in cui si era fermata.
 
 ### Colori dei marker
 
@@ -32,11 +34,11 @@ Se fermi l'analisi o chiudi l'app, rilanciandola riprende dal punto in cui si er
 
 ## Sessioni
 
-Ogni lavoro è una **sessione**: film, montaggio, opzioni e cartella dei risultati, salvati da soli a ogni modifica. In alto a destra:
+Ogni lavoro è una **sessione**: film, montaggio, opzioni, cartella di lavoro e cartella in cui esportare, salvati da soli a ogni modifica. In alto a destra:
 
 - **Nuova** apre una sessione vuota;
-- **Apri…** elenca le sessioni (film, numero di segnalazioni, data) e permette di riaprirle o di **eliminarle**. Eliminando una sessione puoi scegliere di spostare nel Cestino anche i suoi risultati; il film e il montaggio originali non vengono mai toccati;
-- **Salva** conferma il nome scritto nel campo.
+- **Apri…** elenca le sessioni (film, numero di segnalazioni, data) e permette di riaprirle o di **eliminarle**. Eliminando una sessione puoi scegliere di spostare nel Cestino anche la sua cartella di lavoro e i file esportati; il film e il montaggio originali non vengono mai toccati;
+- **Salva** conferma il nome scritto nel campo; anche la cartella di lavoro della sessione prende il nuovo nome.
 
 Le stesse voci sono nel menu **File** (⌘N, ⌘O, ⌘S).
 
@@ -68,14 +70,18 @@ Le tre app usano lo stesso modello, Qwen3-VL, ma con impostazioni diverse: se la
 
 Su M5 Max servono circa 0,5 secondi a fotogramma per oggetti e volti e circa 8 secondi per ogni esame di Qwen3-VL. Per un lungometraggio di 2 ore con 1.500 inquadrature sono 3–5 ore in modalità normale: conviene lanciarlo di notte.
 
-## Risultati (nella cartella scelta)
+## File di lavoro ed esportazioni
 
-- `report_murnau.html`: il report da aprire nel browser o da inviare insieme alla cartella `segnalazioni`
-- `marker_avid.txt`: marker per Media Composer
-- `marker_resolve.edl`: marker per DaVinci Resolve (*Timeline > Importa > Marker della timeline da EDL*)
-- `segnalazioni.csv`: si apre in Excel
-- `segnalazioni.json` e `revisione.json`: i dati completi e le tue revisioni
-- `lavoro/`: fotogrammi e calcoli intermedi. Si può cancellare dopo la revisione (circa 150 MB ogni 10 minuti di film)
+Murnau non scrive niente nella tua cartella finché non esporti. I file con cui lavora stanno in una cartella per sessione, con lo stesso nome della sessione, dentro `~/My Drive/CLAUDE/Murnau – file di lavoro/` (o `~/Library/Application Support/Murnau/Murnau – file di lavoro/` se `My Drive/CLAUDE` non c'è). La vedi con **Mostra** in Materiali o *File › Mostra i file di lavoro*:
+
+- `segnalazioni.json` e `revisione.json`: le segnalazioni e le tue revisioni
+- `segnalazioni/`: fotogrammi e dettagli delle segnalazioni
+- `report_murnau.html`, `marker_avid.txt`, `marker_resolve.edl`, `segnalazioni.csv`: le versioni di lavoro dei file che puoi esportare
+- `lavoro/`: fotogrammi e calcoli intermedi (circa 150 MB ogni 10 minuti di film; *Libera spazio…* può cancellare i fotogrammi, che si ricreano se servono)
+
+Nella cartella in cui esporti (all'inizio quella del film) finiscono solo i file scelti in **Esporta**. Il report esportato contiene anche le immagini, quindi si apre e si invia da solo.
+
+All'avvio Murnau sposta nella cartella di lavoro i file che le versioni precedenti lasciavano nella cartella dei risultati: li sposta, non li cancella, e non tocca mai il film, il montaggio o i file di Vertov (anche il suo `marker_resolve.edl`, che inizia con «TITLE: Descrizioni inquadrature» invece che con «TITLE: Murnau»).
 
 ## Aggiornamenti
 
@@ -101,8 +107,10 @@ Crea il pacchetto e l'annuncio in `dist/` e li carica come release: le copie di 
 ## Da riga di comando
 
 ```bash
-~/.venvs/descrittore/bin/python murnau.py FILM.mov --montaggio FILM.aaf --out risultati
+~/.venvs/descrittore/bin/python murnau.py FILM.mov --montaggio FILM.aaf --out cartella_di_lavoro
 ```
+
+Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file elencati sopra. A fine lavoro l'analisi segnala le cose da verificare con righe `@@avviso` (vedi `avviso()` in `murnau.py`); l'app le mostra nel riquadro dell'esito.
 
 | Parametro | Cosa fa |
 |---|---|

@@ -56,6 +56,11 @@ def avanzamento(nome: str, fatti: int, totale: int) -> None:
         REGISTRO.aggiorna(fatti=fatti, totale=totale)
 
 
+def avviso(testo: str) -> None:
+    """Una cosa da verificare: l'app la elenca nel riquadro che compare a fine lavoro."""
+    print(f"@@avviso {testo}", flush=True)
+
+
 def attesa(testo: str) -> None:
     """Avvisa l'app che l'analisi è ferma in attesa (stringa vuota: si riparte)."""
     print(f"@@attesa {testo}".rstrip(), flush=True)
@@ -296,6 +301,16 @@ def main() -> None:
         if len(fuori) > len(inquadrature) / 2:
             sys.exit(f"Il montaggio non corrisponde al video: {len(fuori)} inquadrature su {len(inquadrature)} cadono "
                      f"fuori dal file. Controlla il timecode di inizio (ora {tc_inizio}).")
+        saltate = [q for q in fuori if q.fine <= 0 or q.inizio >= durata]
+        tagliate = [q for q in fuori if q not in saltate]
+        for gruppo, cosa in ((saltate, "fuori dal film e non è stata controllata|fuori dal film e non sono state controllate"),
+                             (tagliate, "in parte fuori dal film ed è stata controllata solo per il tratto che c'è|"
+                                        "in parte fuori dal film e sono state controllate solo per il tratto che c'è")):
+            if gruppo:
+                uno, molti = cosa.split("|")
+                avviso((f"1 inquadratura del montaggio cade {uno}" if len(gruppo) == 1 else
+                        f"{len(gruppo)} inquadrature del montaggio cadono {molti}") +
+                       f". Verifica che film e montaggio siano della stessa versione (inizio del film: {tc_inizio}).")
         inquadrature = [q for q in inquadrature if q.fine > 0 and q.inizio < durata]
         for q in inquadrature:
             q.inizio, q.fine = max(0.0, q.inizio), min(durata, q.fine)
@@ -385,6 +400,7 @@ def main() -> None:
         rilevatori.carica_modello(args.modello)
         avanzamento("modello", 1, 1)
     fase("esame")
+    non_esaminati = []
     # Solo i fotogrammi non ancora esaminati: così il tempo stimato misura il lavoro vero.
     for n, p in enumerate(da_esaminare, 1):
         try:
@@ -392,10 +408,12 @@ def main() -> None:
             esame.metti(f"{p.name}|{chiave_cat}", rilevatori.esamina(args.modello, p, categorie))
         except RuntimeError as e:
             print(f"{p.name}: {e}")
+            non_esaminati.append(p.name)
         avanzamento("esame", n, len(da_esaminare))
 
     # 6. Verifica dei sospetti
     fase("verifica")
+    non_verificate = set()
     verifiche = Archivio(lavoro / "verifiche.jsonl")
     tempo_di = {p.name: t for q in inquadrature for t, p in fotogrammi[q.numero]}
     segnalazioni = []
@@ -476,6 +494,7 @@ def main() -> None:
                         verifiche.metti(k, rilevatori.verifica(args.modello, cat, immagini))
                     except RuntimeError as e:
                         print(f"Inquadratura {q.numero}: {e}")
+                        non_verificate.add(q.numero)
                         continue
                     finally:
                         fatte += 1
@@ -494,6 +513,17 @@ def main() -> None:
             "creato": time.strftime("%Y-%m-%d %H:%M"), "segnalazioni": segnalazioni}
     (out / "segnalazioni.json").write_text(json.dumps(dati, ensure_ascii=False, indent=1), encoding="utf-8")
     esporta.tutto(out)
+    if non_esaminati:
+        avviso(f"{len(non_esaminati)} fotogrammi non sono stati esaminati: Qwen3-VL non ha risposto. Rilanciando "
+               f"l'analisi vengono ripresi solo quelli.")
+    if non_verificate:
+        avviso(f"In {len(non_verificate)} inquadrature alcuni sospetti non sono stati verificati: Qwen3-VL non ha "
+               f"risposto (inquadrature {', '.join(map(str, sorted(non_verificate)[:20]))}"
+               f"{'…' if len(non_verificate) > 20 else ''}). Rilanciando l'analisi vengono ripresi.")
+    senza_foto = [q.numero for q in inquadrature if not fotogrammi[q.numero]]
+    if senza_foto:
+        avviso(f"{len(senza_foto)} inquadrature non controllate perché non se ne sono potuti estrarre i fotogrammi: "
+               f"{', '.join(map(str, senza_foto[:20]))}{'…' if len(senza_foto) > 20 else ''}.")
     FINITA = True
     fase("fine")
     conteggio = {CATEGORIE[c]: sum(1 for s in segnalazioni if s["categoria"] == c) for c in CATEGORIE if c in categorie}

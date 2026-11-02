@@ -4,6 +4,7 @@ Le segnalazioni marcate come "falso allarme" nella revisione (revisione.json,
 scritto dall'app) vengono escluse dai marker e dal report.
 """
 
+import base64
 import csv
 import html
 import json
@@ -47,7 +48,9 @@ def scrivi_csv(out: Path, dati: dict, revisione: dict) -> None:
         w = csv.DictWriter(f, fieldnames=campi, delimiter=";", extrasaction="ignore")
         w.writeheader()
         for s in dati["segnalazioni"]:
+            # Percorso completo dell'immagine: il foglio esportato sta lontano dalla cartella di lavoro.
             w.writerow({**s, "categoria": s["titolo"], "stato": revisione.get(s["id"], "da rivedere"),
+                        "immagine": str(out / s["immagine"]),
                         "nota": revisione.get("note:" + s["id"], "")})
 
 
@@ -75,8 +78,18 @@ def scrivi_marker_resolve(out: Path, dati: dict, revisione: dict) -> None:
     (out / "marker_resolve.edl").write_text("\n".join(righe), encoding="utf-8")
 
 
-def scrivi_report(out: Path, dati: dict, revisione: dict) -> None:
-    """Report da aprire nel browser o da inviare (insieme alla cartella segnalazioni)."""
+def scrivi_report(out: Path, dati: dict, revisione: dict, destinazione: Path = None) -> None:
+    """Il report della cartella di lavoro (con le immagini accanto, in segnalazioni/) o, con
+    `destinazione`, una copia autonoma da esportare: le immagini sono dentro il file stesso."""
+
+    def immagine(relativo: str) -> str:
+        if destinazione is None:
+            return html.escape(relativo)
+        try:
+            return "data:image/jpeg;base64," + base64.b64encode((out / relativo).read_bytes()).decode()
+        except OSError:
+            return ""
+
     e = html.escape
     elenco = valide(dati, revisione)
     categorie = {}
@@ -90,8 +103,8 @@ def scrivi_report(out: Path, dati: dict, revisione: dict) -> None:
         stato = revisione.get(s["id"])
         nota = revisione.get("note:" + s["id"], "")
         schede.append(f"""<article data-cat="{s['categoria']}" class="{s['categoria']}">
-  <a href="{e(s['immagine'])}" target="_blank"><img src="{e(s['immagine'])}" loading="lazy" alt=""></a>
-  <img class="dettaglio" src="{e(s['dettaglio'])}" loading="lazy" alt="">
+  <a href="{immagine(s['immagine'])}" target="_blank"><img src="{immagine(s['immagine'])}" loading="lazy" alt=""></a>
+  <img class="dettaglio" src="{immagine(s['dettaglio'])}" loading="lazy" alt="">
   <div class="testo">
     <p class="tc">{e(s['tc'])} <span>inq. {s['numero']} · {e(s['tc_in'])}–{e(s['tc_out'])}</span></p>
     <p class="cat">{e(s['titolo'])}{' · <b>confermato</b>' if stato == 'confermato' else ''}</p>
@@ -135,7 +148,7 @@ document.querySelectorAll('.filtri input').forEach(c => c.addEventListener('chan
   document.querySelectorAll('article').forEach(a => a.hidden = !attive.includes(a.dataset.cat));
 }}));
 </script></body></html>"""
-    (out / "report_murnau.html").write_text(pagina, encoding="utf-8")
+    (destinazione or out / "report_murnau.html").write_text(pagina, encoding="utf-8")
 
 
 def tutto(out: Path) -> None:

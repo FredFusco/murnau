@@ -33,15 +33,15 @@ def _dimensione(percorso: Path) -> int:
 
 
 def _cartelle_fotogrammi() -> list:
-    """I fotogrammi estratti, nella cartella dei risultati di ogni sessione."""
+    """I fotogrammi estratti, nella cartella di lavoro di ogni sessione."""
     cartelle = set()
     for f in (DATI / "sessioni").glob("*.json"):
         try:
-            out = json.loads(f.read_text()).get("out")
+            lavoro = json.loads(f.read_text()).get("cartella_lavoro")
         except (OSError, ValueError):
             continue
-        if out and (Path(out) / "lavoro" / "fotogrammi").is_dir():
-            cartelle.add(Path(out) / "lavoro" / "fotogrammi")
+        if lavoro and (Path(lavoro) / "lavoro" / "fotogrammi").is_dir():
+            cartelle.add(Path(lavoro) / "lavoro" / "fotogrammi")
     return sorted(cartelle)
 
 
