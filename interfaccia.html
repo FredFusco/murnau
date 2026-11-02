@@ -431,7 +431,7 @@ const RUOLI = {
   video: ["Film", "le immagini da controllare, inquadratura per inquadratura", "video", "Manca il film: è l'unico materiale indispensabile."],
   montaggio: ["Montaggio", "i tagli esatti e il nome della clip di ogni segnalazione", "montaggio", "Senza EDL o AAF i tagli vengono rilevati automaticamente."],
 };
-let stato = null, progetto = {}, mancanti = [], dati = {segnalazioni: [], revisione: {}}, catSpente = new Set(), firmaDati = "", firmaMateriali = "";
+let stato = null, progetto = {}, mancanti = [], dati = {segnalazioni: [], revisione: {}}, catSpente = new Set(), firmaDati = "", firmaMateriali = "", versioneVista = null;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 function crea(tag, cls, t) { const e = document.createElement(tag); if (cls) e.className = cls; if (t !== undefined) e.textContent = t; return e; }
@@ -737,7 +737,8 @@ async function aggiorna() {
     esportabile = !!s.esportabili;
     disegnaFormati();
     if (s.lavoro.esito && s.lavoro.sessione === progetto.id) mostraEsito(s.lavoro.esito);
-    if (s.risultati && (!prima || (prima.lavoro.attivo && !s.lavoro.attivo) || !$("#vista-segnalazioni").hidden || !$("#vista-esporta").hidden)) caricaSegnalazioni();
+    // Le segnalazioni si ricaricano solo quando cambiano (nuova analisi, revisione, altra sessione).
+    if (s.versione !== versioneVista) { versioneVista = s.versione; caricaSegnalazioni(); }
 
   } catch (e) { /* il server si sta chiudendo */ }
 }

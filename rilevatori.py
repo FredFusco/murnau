@@ -12,14 +12,16 @@
 """
 
 import base64
+import gc
+import http.client
 import json
 import os
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA = "http://localhost:11434"
+OLLAMA_URL = OLLAMA + "/api/chat"
 CONTESTO = 8192           # token di contesto chiesti a Ollama (deve essere lo stesso in ogni richiesta)
 TENUTA = "5m"             # quanto Ollama tiene il modello in memoria dopo l'ultima richiesta di Murnau
 MODELLO_PREDEFINITO = "qwen3-vl:30b-a3b-instruct"
@@ -54,7 +56,10 @@ RICERCHE = [
     ("prese_cavi", "cavo", "an electrical cable lying on the floor"),
     ("prese_cavi", "cavo", "a power cord"),
 ]
-SOGLIA_OGGETTI = 0.2      # punteggio minimo OWLv2: basso apposta, la verifica scarta i falsi
+CATEGORIE_OGGETTI = {cat for cat, _, _ in RICERCHE}  # le categorie in cui OWLv2 cerca i sospetti
+SOGLIA_OGGETTI = 0.19     # punteggio minimo OWLv2: basso apposta, la verifica scarta i falsi. A mezza
+                          # precisione i punteggi oscillano di qualche centesimo: 0.19 trova tutto ciò che
+                          # a precisione piena si trovava con 0.2
 ALTEZZA_VOLTO = 0.07      # volti più piccoli (frazione dell'altezza) sono troppo lontani per lo sguardo
 FRONTALITA = 0.36         # distanza tra gli occhi / larghezza del volto: sopra è frontale
 SCARTO_NASO = 0.25        # spostamento del naso dal centro degli occhi, rispetto alla loro distanza
@@ -73,6 +78,8 @@ class Oggetti:
         self.torch = torch
         self.ricerche = [r for r in RICERCHE if r[0] in categorie]
         self.dispositivo = "mps" if torch.backends.mps.is_available() else "cpu"
+        # Sulla GPU del Mac a mezza precisione: quasi tre volte più veloce, stessi oggetti trovati.
+        self.tipo = torch.float16 if self.dispositivo == "mps" else torch.float32
         try:
             # Dopo il primo scaricamento il modello si legge solo dal disco, senza collegarsi a internet.
             self.proc = Owlv2Processor.from_pretrained(MODELLO_OGGETTI, cache_dir=CACHE_HF, local_files_only=True)
@@ -81,19 +88,29 @@ class Oggetti:
             print("Scarico il rilevatore di oggetti OWLv2 (una volta sola, circa 600 MB)...")
             self.proc = Owlv2Processor.from_pretrained(MODELLO_OGGETTI, cache_dir=CACHE_HF)
             modello = Owlv2ForObjectDetection.from_pretrained(MODELLO_OGGETTI, cache_dir=CACHE_HF)
-        self.modello = modello.to(self.dispositivo).eval()
+        self.modello = modello.to(self.dispositivo, dtype=self.tipo).eval()
+
+    def libera(self) -> None:
+        """Restituisce la memoria della GPU (circa 1 GB): serve a Qwen3-VL, che viene dopo."""
+        del self.modello
+        gc.collect()
+        if self.dispositivo == "mps":
+            self.torch.mps.empty_cache()
 
     def cerca(self, percorso: Path) -> list:
-        """[{categoria, oggetto, punteggio, riquadro (0-1)}] nel fotogramma."""
+        """[{categoria, oggetto, punteggio, riquadro (0-1)}] nel fotogramma (OSError se non si legge)."""
         if not self.ricerche:
             return []
         from PIL import Image
-        img = Image.open(percorso).convert("RGB")
+        with Image.open(percorso) as aperta:
+            img = aperta.convert("RGB")
         w, h = img.size
         testi = [[r[2] for r in self.ricerche]]
         ingresso = self.proc(text=testi, images=img, return_tensors="pt").to(self.dispositivo)
+        ingresso["pixel_values"] = ingresso["pixel_values"].to(self.tipo)
         with self.torch.no_grad():
             uscita = self.modello(**ingresso)
+        uscita.logits, uscita.pred_boxes = uscita.logits.float(), uscita.pred_boxes.float()
         # OWLv2 lavora su un quadrato: le coordinate sono rispetto al lato maggiore.
         lato = max(w, h)
         res = self.proc.post_process_grounded_object_detection(
@@ -150,11 +167,13 @@ class Volti:
         return tuple(angoli)
 
     def frontali(self, percorso: Path) -> list:
-        """Volti rivolti verso la macchina da presa: [{riquadro (0-1), frontalita, angolo, orizzontale, verticale}]."""
-        import numpy as np
+        """Volti rivolti verso la macchina da presa: [{riquadro (0-1), frontalita, angolo, orizzontale, verticale}].
+
+        OSError se il fotogramma non si legge: non è un fotogramma senza volti."""
+        np = self.np
         img = self.cv2.imread(str(percorso))
         if img is None:
-            return []
+            raise OSError(f"fotogramma illeggibile: {Path(percorso).name}")
         h, w = img.shape[:2]
         self.rilevatore.setInputSize((w, h))
         _, trovati = self.rilevatore.detect(img)
@@ -186,7 +205,13 @@ class Volti:
 # Qwen3-VL
 # --------------------------------------------------------------------------
 
-def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: int = 3) -> dict:
+def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: int = 3,
+           attesa_ollama: float = 120) -> dict:
+    """La risposta di Qwen3-VL, già letta secondo lo schema JSON. RuntimeError se non arriva.
+
+    Se Ollama si chiude a metà (per esempio va in crash), lo si riavvia e lo si aspetta fino a
+    `attesa_ollama` secondi prima di riprovare: un'analisi di ore non si perde per un singhiozzo.
+    """
     corpo = json.dumps({
         "model": modello,
         "messages": [{"role": "user", "content": prompt,
@@ -199,10 +224,18 @@ def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: i
         try:
             req = urllib.request.Request(OLLAMA_URL, data=corpo, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=600) as r:
-                return json.loads(json.load(r)["message"]["content"])
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError, TimeoutError) as e:
+                risposta = json.load(r)
+            if risposta.get("done_reason") == "length":
+                # Con temperatura 0 riprovare darebbe la stessa risposta troncata: inutile.
+                raise RuntimeError("Il modello ha dato una risposta troppo lunga, rimasta a metà.")
+            return json.loads(risposta["message"]["content"])
+        # OSError comprende la connessione rifiutata o chiusa e il tempo scaduto; ValueError il JSON
+        # non valido; HTTPException le risposte interrotte a metà.
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as e:
             if tentativo == tentativi:
                 raise RuntimeError(f"Il modello non ha risposto correttamente: {e}") from e
+            if attesa_ollama > 0 and not ollama_acceso():
+                avvia_ollama(attesa_ollama)
             time.sleep(3)
 
 
@@ -333,7 +366,7 @@ def modello_caricato(modello: str) -> bool:
     alla prima richiesta di Murnau: conta come non caricato.
     """
     try:
-        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=3) as r:
+        with urllib.request.urlopen(OLLAMA + "/api/ps", timeout=3) as r:
             return any(m["name"] == modello and m.get("context_length", CONTESTO) == CONTESTO
                        for m in json.load(r).get("models", []))
     except Exception:
@@ -344,33 +377,43 @@ def carica_modello(modello: str) -> None:
     """Porta il modello in memoria con il contesto che usa Murnau, senza fargli generare nulla."""
     corpo = json.dumps({"model": modello, "keep_alive": TENUTA, "options": {"num_ctx": CONTESTO}}).encode()
     try:
-        req = urllib.request.Request("http://localhost:11434/api/generate", data=corpo,
+        req = urllib.request.Request(OLLAMA + "/api/generate", data=corpo,
                                      headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=600).read()
     except Exception as e:
         print(f"Caricamento del modello non riuscito ({e}): ci riprovo con il primo esame.")
 
 
-def ollama_pronto(modello: str) -> bool:
+def _modelli_installati():
+    """I nomi dei modelli installati in Ollama, o None se Ollama è spento."""
     try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
-            return any(m["name"].startswith(modello) for m in json.load(r).get("models", []))
+        with urllib.request.urlopen(OLLAMA + "/api/tags", timeout=3) as r:
+            return [m["name"] for m in json.load(r).get("models", [])]
     except Exception:
-        return False
+        return None
 
 
-def avvia_ollama() -> None:
-    """Avvia Ollama in locale se non è già acceso."""
+def ollama_acceso() -> bool:
+    return _modelli_installati() is not None
+
+
+def modello_installato(modello: str) -> bool:
+    return any(nome.startswith(modello) for nome in _modelli_installati() or [])
+
+
+def avvia_ollama(attesa: float = 30) -> None:
+    """Avvia Ollama in locale se non è già acceso e aspetta fino a `attesa` secondi che risponda."""
     import shutil
     import subprocess
-    if ollama_pronto(""):
+    if ollama_acceso():
         return
     if os.path.exists("/Applications/Ollama.app"):
         subprocess.Popen(["open", "-g", "-a", "Ollama"])
     elif shutil.which("ollama"):
         subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
-    for _ in range(30):
+    limite = time.monotonic() + attesa
+    while time.monotonic() < limite:
         time.sleep(1)
-        if ollama_pronto(""):
+        if ollama_acceso():
             return

@@ -61,14 +61,21 @@ Le tre app usano lo stesso modello, Qwen3-VL, ma con impostazioni diverse: se la
 ## Come funziona
 
 1. Estrae un fotogramma al secondo (senza le bande nere) e scarta quelli a ridosso dei tagli.
-2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, prese e cavi. È veloce ma impreciso: serve solo a trovare i sospetti.
+2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, prese e cavi. È veloce ma impreciso: serve solo a trovare i sospetti. Sulla GPU del Mac lavora a mezza precisione (circa tre volte più veloce, stessi sospetti) e alla fine restituisce la memoria, che serve a Qwen3-VL.
 3. **YuNet** trova i volti rivolti verso l'obiettivo, candidati allo sguardo in macchina.
 4. **Qwen3-VL** esamina da 1 a 4 fotogrammi per inquadratura (uno ogni 2 secondi in modalità accurata) con domande precise. In questo passaggio trova anche i riflessi.
 5. Ogni sospetto viene **verificato** di nuovo da Qwen3-VL sul fotogramma con il riquadro e sul ritaglio ingrandito. Diventa una segnalazione solo se supera la verifica.
 
 ### Tempi
 
-Su M5 Max servono circa 0,5 secondi a fotogramma per oggetti e volti e circa 8 secondi per ogni esame di Qwen3-VL. Per un lungometraggio di 2 ore con 1.500 inquadrature sono 3–5 ore in modalità normale: conviene lanciarlo di notte.
+Su M5 Max servono circa 0,05 secondi a fotogramma per gli oggetti, 0,08 per i volti e circa 4–8 secondi per ogni esame o verifica di Qwen3-VL, che occupa oltre il 90% del tempo. Per un lungometraggio di 2 ore con 1.500 inquadrature sono 3–5 ore in modalità normale: conviene lanciarlo di notte.
+
+### Se qualcosa va storto
+
+- Ogni risultato viene salvato appena calcolato: un'analisi interrotta (Ferma, crash, Mac spento) riprende da dove era arrivata, anche se l'interruzione ha lasciato un risultato scritto a metà.
+- Sessioni, segnalazioni e revisioni si scrivono in un colpo solo: un'interruzione lascia la versione precedente intera, mai un file a metà. Se per un istante la sessione aperta non si legge, Murnau riprova; se proprio non si legge apre la più recente, senza crearne una vuota.
+- Se Ollama si chiude durante l'analisi, Murnau lo riavvia e lo aspetta fino a due minuti prima di rinunciare a quel fotogramma.
+- Un fotogramma che non si legge viene saltato e indicato nel riquadro dell'esito, invece di fermare l'analisi.
 
 ## File di lavoro ed esportazioni
 
@@ -110,7 +117,7 @@ Crea il pacchetto e l'annuncio in `dist/` e li carica come release: le copie di 
 ~/.venvs/descrittore/bin/python murnau.py FILM.mov --montaggio FILM.aaf --out cartella_di_lavoro
 ```
 
-Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file elencati sopra. A fine lavoro l'analisi segnala le cose da verificare con righe `@@avviso` (vedi `avviso()` in `murnau.py`); l'app le mostra nel riquadro dell'esito.
+Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file elencati sopra. L'analisi racconta all'app a che punto è con righe che iniziano con `@@` (fase, avanzamento, piano del lavoro, attese, cose da verificare): sono descritte in `progresso.py`.
 
 | Parametro | Cosa fa |
 |---|---|
@@ -120,6 +127,27 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 | `--passo` | secondi tra un fotogramma e l'altro per oggetti e volti (predefinito 1) |
 | `--tc-inizio` | timecode del primo fotogramma, se il file non lo dichiara |
 | `--da N --a M` | analizza solo le inquadrature da N a M |
+
+## Com'è fatto il programma
+
+| File | Cosa contiene |
+|---|---|
+| `app.py` | la finestra, i menu e il piccolo server interno che serve l'interfaccia (`interfaccia.html`) |
+| `sessioni.py` | sessioni, materiali e cartelle di lavoro |
+| `lavoro.py` | l'analisi lanciata dall'app: avanzamento, percentuale, tempo restante, esito |
+| `murnau.py` | l'analisi vera e propria, divisa in fasi |
+| `rilevatori.py` | OWLv2, volti e sguardo, Qwen3-VL tramite Ollama |
+| `montaggio.py`, `aaf.py` | EDL, AAF, timecode, tagli e bande nere |
+| `esporta.py` | marker per Avid e Resolve, foglio di calcolo, report |
+| `archivi.py`, `progresso.py` | scrittura sicura dei file; righe `@@` dell'avanzamento |
+| `coordinamento.py` | convivenza con Vertov e Ozu, analisi lanciate da Terminale |
+| `aggiornamenti.py`, `pulizia.py` | aggiornamenti e Libera spazio |
+
+I test automatici (non usano modelli né Ollama, durano un secondo):
+
+```bash
+~/.venvs/descrittore/bin/python -W ignore -m unittest discover -s tests
+```
 
 ## Requisiti
 

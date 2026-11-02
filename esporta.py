@@ -78,17 +78,35 @@ def scrivi_marker_resolve(out: Path, dati: dict, revisione: dict) -> None:
     (out / "marker_resolve.edl").write_text("\n".join(righe), encoding="utf-8")
 
 
+LATO_INCORPORATE = 960   # pixel del lato lungo delle immagini dentro il report esportato
+QUALITA_INCORPORATE = 80
+
+
+def _incorporata(percorso: Path) -> str:
+    """L'immagine dentro la pagina stessa, rimpicciolita: il report esportato resta leggero."""
+    import cv2
+    img = cv2.imread(str(percorso))
+    if img is None:
+        return ""
+    scala = LATO_INCORPORATE / max(img.shape[:2])
+    if scala < 1:
+        img = cv2.resize(img, None, fx=scala, fy=scala, interpolation=cv2.INTER_AREA)
+    jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, QUALITA_INCORPORATE])[1].tobytes()
+    return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+
+
 def scrivi_report(out: Path, dati: dict, revisione: dict, destinazione: Path = None) -> None:
     """Il report della cartella di lavoro (con le immagini accanto, in segnalazioni/) o, con
     `destinazione`, una copia autonoma da esportare: le immagini sono dentro il file stesso."""
 
     def immagine(relativo: str) -> str:
-        if destinazione is None:
-            return html.escape(relativo)
-        try:
-            return "data:image/jpeg;base64," + base64.b64encode((out / relativo).read_bytes()).decode()
-        except OSError:
-            return ""
+        return html.escape(relativo) if destinazione is None else _incorporata(out / relativo)
+
+    def fotogramma(relativo: str) -> str:
+        # Nel report della cartella di lavoro il fotogramma si apre a grandezza piena; in quello esportato
+        # no: il collegamento ripeterebbe l'immagine, raddoppiando il peso del file.
+        img = f'<img src="{immagine(relativo)}" loading="lazy" alt="">'
+        return img if destinazione else f'<a href="{html.escape(relativo)}" target="_blank">{img}</a>'
 
     e = html.escape
     elenco = valide(dati, revisione)
@@ -103,7 +121,7 @@ def scrivi_report(out: Path, dati: dict, revisione: dict, destinazione: Path = N
         stato = revisione.get(s["id"])
         nota = revisione.get("note:" + s["id"], "")
         schede.append(f"""<article data-cat="{s['categoria']}" class="{s['categoria']}">
-  <a href="{immagine(s['immagine'])}" target="_blank"><img src="{immagine(s['immagine'])}" loading="lazy" alt=""></a>
+  {fotogramma(s['immagine'])}
   <img class="dettaglio" src="{immagine(s['dettaglio'])}" loading="lazy" alt="">
   <div class="testo">
     <p class="tc">{e(s['tc'])} <span>inq. {s['numero']} · {e(s['tc_in'])}–{e(s['tc_out'])}</span></p>
