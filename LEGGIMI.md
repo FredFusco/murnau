@@ -4,9 +4,9 @@ Cerca gli errori di ripresa in un film montato e li segnala con timecode, fotogr
 
 - **Troupe o attrezzatura in campo**: boom, macchina da presa, cavalletti, stativi, luci da set, operatori
 - **Troupe nei riflessi**: specchi, vetri, finestre, occhiali, carrozzerie, superfici lucide
-- **Sguardi in macchina** di attori e comparse
+- **Sguardi in macchina** di attori e comparse, solo se guardano proprio nell'obiettivo
 - **Microfoni lavalier** visibili sugli attori
-- **Prese elettriche e cavi** a terra o sulle pareti
+- **Cavi della troupe**: cavi di luci, macchina da presa o audio a terra, prolunghe, nastro da set (non le prese a muro né i cavi degli oggetti di scena, che sono arredo)
 
 Il film non esce dal computer. Gli unici collegamenti a internet servono a scaricare i modelli la prima volta e a controllare se ne esistono versioni nuove. Il controllo legge soltanto il numero di versione pubblicato e non invia nulla del film.
 
@@ -30,7 +30,7 @@ Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suo
 | Troupe nei riflessi | magenta |
 | Sguardo in macchina | giallo |
 | Microfono lavalier | ciano |
-| Prese e cavi | blu |
+| Cavi della troupe | blu |
 
 ## Sessioni
 
@@ -44,13 +44,13 @@ Le stesse voci sono nel menu **File** (⌘N, ⌘O, ⌘S).
 
 ## Libera spazio
 
-**Libera spazio…** (in alto, o nel menu Aiuto) mostra quanto occupano i file creati da Murnau e lascia scegliere cosa cancellare: fotogrammi estratti (si ricreano se rilanci un'analisi), versioni precedenti dell'app, registro, file di installazione delle librerie, modelli di prova non usati e altri modelli di Ollama. Segnalazioni, revisioni e sessioni non vengono toccate.
+**Libera spazio…** (in alto, o nel menu Aiuto) mostra quanto occupano i file creati da Murnau e lascia scegliere cosa cancellare: fotogrammi estratti (si ricreano se rilanci un'analisi), versioni precedenti dell'app, registro, file di installazione delle librerie, modelli di prova non usati e altri modelli di Ollama. Segnalazioni, revisioni e sessioni non vengono toccate. Non propone mai i modelli usati da Murnau, Vertov e Ozu: quelli delle altre app li legge dal loro codice.
 
 I modelli di Murnau stanno nella sua cartella (`~/Library/Application Support/Murnau/modelli`), così la pulizia di altre app, come Vertov, non li cancella per errore.
 
 ## Insieme a Vertov e Ozu
 
-Le tre app usano lo stesso modello, Qwen3-VL, ma con impostazioni diverse: se lavorano insieme, Ollama deve ricaricarlo (20 GB) a ogni cambio e tutto rallenta di molto. Per questo:
+Murnau usa due modelli: **Qwen3-VL**, lo stesso di Vertov, e **Gemma 4 26B**, lo stesso di Ozu, con impostazioni diverse dalle loro: se lavorano insieme, Ollama deve ricaricarli (circa 20 GB) a ogni cambio e tutto rallenta di molto. Per questo:
 
 - **Precedenza a Vertov**: prima di usare il modello Murnau controlla se un'analisi di Vertov è in corso e, se sì, aspetta («In attesa: Vertov sta usando il modello») e riparte da sola. Ozu a sua volta aspetta Murnau.
 - **Una sola analisi di Murnau alla volta**: l'app non ne avvia una se ce n'è già un'altra in corso.
@@ -61,14 +61,21 @@ Le tre app usano lo stesso modello, Qwen3-VL, ma con impostazioni diverse: se la
 ## Come funziona
 
 1. Estrae un fotogramma al secondo (senza le bande nere) e scarta quelli a ridosso dei tagli.
-2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, prese e cavi. È veloce ma impreciso: serve solo a trovare i sospetti. Sulla GPU del Mac lavora a mezza precisione (circa tre volte più veloce, stessi sospetti) e alla fine restituisce la memoria, che serve a Qwen3-VL.
-3. **YuNet** trova i volti rivolti verso l'obiettivo, candidati allo sguardo in macchina.
+2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, cavi e prolunghe. È veloce ma impreciso: serve solo a trovare i sospetti. Sulla GPU del Mac lavora a mezza precisione (circa tre volte più veloce, stessi sospetti) e alla fine restituisce la memoria, che serve a Qwen3-VL.
+3. **YuNet** trova i volti rivolti verso l'obiettivo e un modello dello sguardo (L2CS) misura di quanti gradi lo sguardo si discosta dall'obiettivo: si segnala solo entro 2°. Con una soglia più larga quasi tutte le segnalazioni erano attori che guardavano il partner appena accanto alla macchina, e nessuno dei 12 modelli provati sa distinguere i due casi.
 4. **Qwen3-VL** esamina da 1 a 4 fotogrammi per inquadratura (uno ogni 2 secondi in modalità accurata) con domande precise. In questo passaggio trova anche i riflessi.
-5. Ogni sospetto viene **verificato** di nuovo da Qwen3-VL sul fotogramma con il riquadro e sul ritaglio ingrandito. Diventa una segnalazione solo se supera la verifica.
+5. Ogni sospetto viene **verificato** da **Gemma 4** sul fotogramma con il riquadro e sul ritaglio ingrandito, scegliendo tra opzioni precise (per esempio «microfono tenuto in mano da un personaggio (di scena)» o «microfono boom»): è il programma, non il modello, a decidere quali opzioni sono errori.
+6. Ciò che Gemma 4 accetta passa dalla **seconda opinione** di Qwen3-VL. Se i due sono d'accordo è una segnalazione normale; se no resta, ma **da controllare** (certezza bassa, con la seconda opinione scritta sotto) e la trovi con il filtro *Da controllare*. Gemma è veloce ma generoso, Qwen prudente: così non sparisce niente in silenzio, e le tue revisioni diranno quale dei due ha più spesso ragione. Nei marker queste segnalazioni iniziano con «[da controllare]».
+
+I fotogrammi si analizzano senza le bande nere, anche quando dentro le bande ci sono scritte sovraimpresse (timecode, nome del rullo).
+
+### Perché questi modelli
+
+A novembre 2026 sono stati confrontati 12 modelli gratuiti e locali (Qwen3-VL, Gemma 4 26B e 31B, Qwen 3.5 e 3.8, Nemotron 3.5 Bolt, Bonsai-2, LFM3-VL e i modelli «giudice» pplx-decider, clef-flash e d3) sulle segnalazioni già rivedute. Qwen3-VL è l'unico che nell'esame trova i dettagli piccoli, come un riflesso di luce da set. Gemma 4 26B sui casi già rivisti verificava con la stessa precisione ed era 2,6 volte più veloce, ma sull'intero rullo è risultato troppo generoso (collane e pieghe scambiate per lavalier), mentre Qwen3-VL da solo scartava quasi tutto: da qui i due livelli. Gemma 4 gira con il motore MLX di Ollama, che non accetta la «risposta a schema»: Murnau allora descrive lo schema nel testo e controlla la risposta; un'opzione scritta male diventa sempre la più prudente.
 
 ### Tempi
 
-Su M5 Max servono circa 0,05 secondi a fotogramma per gli oggetti, 0,08 per i volti e circa 4–8 secondi per ogni esame o verifica di Qwen3-VL, che occupa oltre il 90% del tempo. Per un lungometraggio di 2 ore con 1.500 inquadrature sono 3–5 ore in modalità normale: conviene lanciarlo di notte.
+Su M5 Max servono circa 0,05 secondi a fotogramma per gli oggetti, 0,08 per i volti, circa 3–4 secondi per ogni esame di Qwen3-VL e poco più di 1 secondo per ogni verifica di Gemma 4: l'esame occupa la maggior parte del tempo. Per un lungometraggio di 2 ore con 1.500 inquadrature sono 3–5 ore in modalità normale: conviene lanciarlo di notte.
 
 ### Se qualcosa va storto
 
@@ -97,7 +104,7 @@ All'avvio, al massimo una volta al giorno, Murnau controlla se ci sono versioni 
 - **Murnau** stesso (quando gli aggiornamenti saranno pubblicati online: l'indirizzo va in `aggiornamenti.json`);
 - **ffmpeg** e **Ollama** (con Homebrew);
 - le **librerie Python** (condivise con Vertov: dopo l'aggiornamento si verifica che funzionino per entrambe le app, altrimenti si torna alle versioni di prima);
-- i modelli **Qwen3-VL** e **OWLv2**.
+- i modelli **Qwen3-VL**, **Gemma 4** e **OWLv2**.
 
 Se ne trova, mostra l'elenco e chiede cosa installare: **Aggiorna**, **Più tardi** o **Salta questa versione**. Il controllo automatico si può spegnere (**Controlla all'avvio**) e si può sempre lanciare a mano con **Aggiornamenti…** o dal menu Aiuto. Durante un'analisi non si aggiorna. I file sostituiti dagli aggiornamenti dell'app vengono conservati, per poter tornare indietro.
 
@@ -124,6 +131,7 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 | `--montaggio` | EDL CMX3600 o AAF della sequenza |
 | `--categorie` | ad esempio `troupe,riflessi,sguardi` (predefinito: tutte) |
 | `--accurato` | Qwen3-VL esamina un fotogramma ogni 2 secondi |
+| `--modello`, `--modello-verifica` | i modelli di Ollama per l'esame e per la verifica |
 | `--passo` | secondi tra un fotogramma e l'altro per oggetti e volti (predefinito 1) |
 | `--tc-inizio` | timecode del primo fotogramma, se il file non lo dichiara |
 | `--da N --a M` | analizza solo le inquadrature da N a M |
@@ -136,7 +144,7 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 | `sessioni.py` | sessioni, materiali e cartelle di lavoro |
 | `lavoro.py` | l'analisi lanciata dall'app: avanzamento, percentuale, tempo restante, esito |
 | `murnau.py` | l'analisi vera e propria, divisa in fasi |
-| `rilevatori.py` | OWLv2, volti e sguardo, Qwen3-VL tramite Ollama |
+| `rilevatori.py` | OWLv2, volti e sguardo, Qwen3-VL e Gemma 4 tramite Ollama |
 | `montaggio.py`, `aaf.py` | EDL, AAF, timecode, tagli e bande nere |
 | `esporta.py` | marker per Avid e Resolve, foglio di calcolo, report |
 | `archivi.py`, `progresso.py` | scrittura sicura dei file; righe `@@` dell'avanzamento |
@@ -151,10 +159,11 @@ I test automatici (non usano modelli né Ollama, durano un secondo):
 
 ## Requisiti
 
-Murnau usa lo stesso ambiente Python e lo stesso Ollama già installati sul Mac (`~/.venvs/descrittore`, modello `qwen3-vl:30b-a3b-instruct`), ma è un'app a sé: ha dati, impostazioni e finestra propri, in `~/Library/Application Support/Murnau`.
+Murnau usa lo stesso ambiente Python e lo stesso Ollama già installati sul Mac (`~/.venvs/descrittore`, modelli `qwen3-vl:30b-a3b-instruct` e `gemma4:26b`), ma è un'app a sé: ha dati, impostazioni e finestra propri, in `~/Library/Application Support/Murnau`.
 
 ## Limiti
 
 - Un riflesso minuscolo o un boom che entra per pochi fotogrammi tra due campioni può sfuggire: la modalità accurata riduce il rischio.
-- Prese e cavi sono spesso arredo voluto: Murnau li segnala tutti, sta a te decidere.
+- Un cavo della troupe nascosto tra gli oggetti di scena può sfuggire: Murnau cerca solo ciò che la troupe lascia, non le prese e i cavi d'arredo.
+- Uno sguardo in macchina appena di lato all'obiettivo (oltre 2°) non viene segnalato.
 - Uno sguardo in macchina voluto (una soggettiva, un a parte) viene segnalato come gli altri.

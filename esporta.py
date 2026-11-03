@@ -36,12 +36,13 @@ def valide(dati: dict, revisione: dict) -> list:
 
 def _nota(s: dict, revisione: dict) -> str:
     nota = revisione.get("note:" + s["id"], "")
-    testo = f'{s["titolo"]}: {s["descrizione"]}' + (f" — {nota}" if nota else "")
+    testo = ("[da controllare] " if s.get("da_controllare") else "") + f'{s["titolo"]}: {s["descrizione"]}' + \
+        (f" — {nota}" if nota else "")
     return re.sub(r"\s+", " ", testo).strip()
 
 
 def scrivi_csv(out: Path, dati: dict, revisione: dict) -> None:
-    campi = ["numero", "tc", "tc_in", "tc_out", "categoria", "descrizione", "certezza", "stato", "nota",
+    campi = ["numero", "tc", "tc_in", "tc_out", "categoria", "descrizione", "certezza", "da_controllare", "stato", "nota",
              "clip", "scena", "fotogrammi_sospetti", "fotogrammi_totali", "immagine"]
     # Separatore ";" e BOM: si apre correttamente in Excel con impostazioni italiane.
     with (out / "segnalazioni.csv").open("w", newline="", encoding="utf-8-sig") as f:
@@ -50,6 +51,7 @@ def scrivi_csv(out: Path, dati: dict, revisione: dict) -> None:
         for s in dati["segnalazioni"]:
             # Percorso completo dell'immagine: il foglio esportato sta lontano dalla cartella di lavoro.
             w.writerow({**s, "categoria": s["titolo"], "stato": revisione.get(s["id"], "da rivedere"),
+                        "da_controllare": "sì" if s.get("da_controllare") else "",
                         "immagine": str(out / s["immagine"]),
                         "nota": revisione.get("note:" + s["id"], "")})
 
@@ -125,7 +127,7 @@ def scrivi_report(out: Path, dati: dict, revisione: dict, destinazione: Path = N
   <img class="dettaglio" src="{immagine(s['dettaglio'])}" loading="lazy" alt="">
   <div class="testo">
     <p class="tc">{e(s['tc'])} <span>inq. {s['numero']} · {e(s['tc_in'])}–{e(s['tc_out'])}</span></p>
-    <p class="cat">{e(s['titolo'])}{' · <b>confermato</b>' if stato == 'confermato' else ''}</p>
+    <p class="cat">{e(s['titolo'])}{' · <b>confermato</b>' if stato == 'confermato' else ''}{' · da controllare' if s.get('da_controllare') and stato != 'confermato' else ''}</p>
     <p>{e(s['descrizione'])}</p>
     {f'<p class="nota">{e(nota)}</p>' if nota else ''}
     <p class="clip">{e(s['scena'] or s['clip'])} · certezza {e(s['certezza'])} · in {s['fotogrammi_sospetti']} fotogrammi su {s['fotogrammi_totali']}</p>

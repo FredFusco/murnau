@@ -6,6 +6,7 @@ segnalazioni, le revisioni né le sessioni: solo cose che Murnau ha creato o sca
 """
 
 import json
+import re
 import shutil
 import urllib.request
 from pathlib import Path
@@ -50,15 +51,34 @@ def _modelli_hf_non_usati() -> list:
     return [(repo, c, _dimensione(c)) for repo, c in cartelle.items() if repo not in MODELLI_HF_USATI]
 
 
-def _modelli_ollama_non_usati(modello: str) -> list:
+# Le app sorelle (Vertov, Ozu...) stanno accanto alla cartella di Murnau.
+FAMIGLIA = Path(__file__).resolve().parent.parent
+
+
+def modelli_protetti() -> set:
+    """I modelli di Ollama usati da Murnau e dalle app sorelle: Libera spazio non li propone mai.
+
+    Quelli delle altre app si leggono dal loro codice (righe come MODELLO = "gemma4:26b"), così una
+    scelta nuova di Vertov o di Ozu è protetta senza dover cambiare Murnau."""
+    protetti = set(rilevatori.MODELLI)
+    for f in FAMIGLIA.glob("*/*.py"):
+        try:
+            protetti |= set(re.findall(r'^\s*MODELLO\w* *= *"([\w.:/-]+:[\w.:-]+)"', f.read_text(errors="ignore"), re.M))
+        except OSError:
+            pass
+    return protetti
+
+
+def _modelli_ollama_non_usati() -> list:
+    protetti = modelli_protetti()
     try:
         with urllib.request.urlopen(f"{OLLAMA}/api/tags", timeout=3) as r:
-            return [(m["name"], m.get("size", 0)) for m in json.load(r).get("models", []) if m["name"] != modello]
+            return [(m["name"], m.get("size", 0)) for m in json.load(r).get("models", []) if m["name"] not in protetti]
     except Exception:
         return []
 
 
-def voci(modello: str) -> list:
+def voci() -> list:
     """Cosa si può cancellare, con la dimensione in byte."""
     v = []
     fotogrammi = _cartelle_fotogrammi()
@@ -82,16 +102,16 @@ def voci(modello: str) -> list:
               "spiega": "Modelli nella cartella di Murnau che Murnau non usa: " +
                         (", ".join(r for r, *_ in hf) or "nessuno") + ".",
               "byte": sum(b for *_, b in hf), "consigliata": True})
-    ollama = _modelli_ollama_non_usati(modello)
+    ollama = _modelli_ollama_non_usati()
     v.append({"chiave": "modelli_ollama", "nome": "Altri modelli in Ollama",
-              "spiega": "Modelli di Ollama diversi da quello che usano Murnau e Vertov (" + modello + "): " +
+              "spiega": "Modelli di Ollama che né Murnau né Vertov né Ozu usano: " +
                         (", ".join(n for n, _ in ollama) or "nessuno") +
                         ". Lasciali se usi Ollama anche per altro.",
               "byte": sum(b for _, b in ollama), "consigliata": False})
     return [x for x in v if x["byte"] > 0]
 
 
-def cancella(chiavi: list, modello: str) -> int:
+def cancella(chiavi: list) -> int:
     """Cancella le voci scelte e restituisce i byte liberati."""
     liberati = 0
     if "fotogrammi" in chiavi:
@@ -112,7 +132,7 @@ def cancella(chiavi: list, modello: str) -> int:
             shutil.rmtree(cartella, ignore_errors=True)
             liberati += byte
     if "modelli_ollama" in chiavi:
-        for nome, byte in _modelli_ollama_non_usati(modello):
+        for nome, byte in _modelli_ollama_non_usati():
             richiesta = urllib.request.Request(f"{OLLAMA}/api/delete", method="DELETE",
                                                data=json.dumps({"model": nome}).encode(),
                                                headers={"Content-Type": "application/json"})

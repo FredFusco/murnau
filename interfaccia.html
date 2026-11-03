@@ -172,6 +172,9 @@ select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid 
 .scheda .tc { font: 600 19px/1.2 var(--mono); margin: 0; }
 .scheda .dove { color: var(--tenue); font-size: 12.5px; margin: 2px 0 8px; }
 .scheda .cat { color: var(--c); font-weight: 700; margin: 0 0 4px; }
+.dubbia { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11.5px; font-weight: 600;
+  color: var(--tenue); border: 1px dashed var(--tenue); }
+.seconda { color: var(--tenue); font-size: 12.5px; font-style: italic; margin: 0 0 6px; }
 .scheda .descr { margin: 0 0 8px; }
 .scheda .clip { color: var(--tenue); font-size: 12.5px; margin: 0 0 10px; overflow-wrap: anywhere; }
 .giudizio { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -237,7 +240,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
     <img src="/icona.png" alt="">
     <div>
       <h1 class="titolo">Murnau</h1>
-      <p class="sottotitolo">Cerca boom, troupe, riflessi, sguardi in macchina, lavalier, prese e cavi. Tutto su questo Mac.</p>
+      <p class="sottotitolo">Cerca boom, troupe, riflessi, sguardi in macchina, lavalier e cavi della troupe. Tutto su questo Mac.</p>
     </div>
     <div class="sessione">
       <label for="nome-sessione">Sessione</label>
@@ -338,6 +341,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
       <option value="da">Da rivedere</option>
       <option value="confermato">Confermate</option>
       <option value="falso">Falsi allarmi</option>
+      <option value="dubbie">Da controllare</option>
     </select>
   </div>
   <p class="riepilogo" id="riepilogo"></p>
@@ -418,13 +422,13 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
 
 <script>
 const FASI = [["preparazione", "Preparazione"], ["fotogrammi", "Fotogrammi"], ["oggetti", "Oggetti (OWLv2)"],
-              ["volti", "Volti e sguardi"], ["modello", "Caricamento di Qwen3-VL"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti"]];
+              ["volti", "Volti e sguardi"], ["modello", "Caricamento di Qwen3-VL"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti (Gemma 4)"]];
 const DESCRIZIONI = {
   troupe: "Boom, macchina da presa, stativi, luci da set, operatori e troupe in campo",
   riflessi: "Troupe e attrezzatura riflesse in specchi, vetri, occhiali, carrozzerie",
   sguardi: "Attori e comparse che guardano nell'obiettivo",
   lavalier: "Radiomicrofoni e fili visibili sugli attori",
-  prese_cavi: "Prese elettriche e cavi a terra o sulle pareti",
+  prese_cavi: "Cavi, prolunghe e nastro della troupe (non le prese a muro né i cavi degli oggetti di scena)",
 };
 // Ruoli dei materiali: nome, a cosa serve, riquadro, cosa succede se manca.
 const RUOLI = {
@@ -719,7 +723,8 @@ function disegnaEsterne(esterne) {
 function disegnaPrerequisiti(s) {
   const voce = (ok, si, no) => `<span><span class="pallino-stato ${ok ? "ok" : ""}"></span>${ok ? si : no}</span>`;
   $("#prerequisiti").innerHTML = voce(s.ollama, "Ollama acceso", "Ollama spento: verrà avviato all'inizio dell'analisi") +
-    voce(s.modello, "Qwen3-VL pronto", "Manca il modello Qwen3-VL");
+    voce(s.modello, "Qwen3-VL e Gemma 4 pronti", "Manca un modello: " + (s.mancano || []).join(", ")) +
+    (s.batteria ? voce(false, "", "Il Mac va a batteria: l'analisi è circa due volte più lenta. Collega l'alimentatore.") : "");
 }
 
 async function aggiorna() {
@@ -887,7 +892,8 @@ function disegnaSegnalazioni() {
     disegnaSegnalazioni();
   });
   const filtro = $("#filtro-stato").value;
-  const visibili = tutte.filter(s => !catSpente.has(s.categoria) && (filtro === "tutte" || statoDi(s) === filtro));
+  const visibili = tutte.filter(s => !catSpente.has(s.categoria) &&
+    (filtro === "tutte" || (filtro === "dubbie" ? s.da_controllare : statoDi(s) === filtro)));
   const conferme = tutte.filter(s => statoDi(s) === "confermato").length;
   const falsi = tutte.filter(s => statoDi(s) === "falso").length;
   $("#riepilogo").textContent = tutte.length
@@ -914,8 +920,9 @@ function disegnaSegnalazioni() {
       <div>
         <p class="tc">${esc(s.tc)}</p>
         <p class="dove">inquadratura ${s.numero} · ${esc(s.tc_in)} – ${esc(s.tc_out)}</p>
-        <p class="cat">${esc(s.titolo)}</p>
+        <p class="cat">${esc(s.titolo)}${s.da_controllare ? '<span class="dubbia" title="La verifica la ritiene un errore, la seconda opinione no">da controllare</span>' : ""}</p>
         <p class="descr">${esc(s.descrizione)}</p>
+        ${s.da_controllare ? `<p class="seconda">Seconda opinione: ${esc(s.seconda_opinione || "")}</p>` : ""}
         <p class="clip">${esc(s.scena || s.clip)} · certezza ${esc(s.certezza)} · sospetto in ${s.fotogrammi_sospetti} fotogrammi su ${s.fotogrammi_totali}</p>
         <div class="giudizio">
           <button class="si ${st === "confermato" ? "scelto" : ""}" data-stato="confermato">✓ Errore confermato</button>

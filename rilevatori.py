@@ -6,17 +6,23 @@
 - Volti: YuNet (OpenCV) trova i volti rivolti verso la macchina da presa e un
   modello di stima dello sguardo (L2CS addestrato su Gaze360, licenza MIT)
   misura di quanti gradi lo sguardo si discosta dall'obiettivo.
-- Qwen3-VL tramite Ollama: esamina i fotogrammi con domande precise e poi
-  verifica ogni sospetto su un ritaglio ingrandito. Solo ciò che supera la
-  verifica diventa una segnalazione.
+- Due modelli con visione tramite Ollama: Qwen3-VL esamina i fotogrammi con
+  domande precise (è il più attento ai dettagli piccoli); Gemma 4 verifica ogni
+  sospetto su un ritaglio ingrandito (veloce, ma generoso) e Qwen3-VL dà la
+  seconda opinione su ciò che Gemma accetta (prudente): se sono d'accordo è una
+  segnalazione, se no è «da controllare». La scelta viene da un confronto di 12
+  modelli gratuiti sulle segnalazioni rivedute e da una prova su un rullo (2026-11).
 """
 
 import base64
+import difflib
 import gc
 import http.client
 import json
 import os
+import re
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -24,7 +30,14 @@ OLLAMA = "http://localhost:11434"
 OLLAMA_URL = OLLAMA + "/api/chat"
 CONTESTO = 8192           # token di contesto chiesti a Ollama (deve essere lo stesso in ogni richiesta)
 TENUTA = "5m"             # quanto Ollama tiene il modello in memoria dopo l'ultima richiesta di Murnau
-MODELLO_PREDEFINITO = "qwen3-vl:30b-a3b-instruct"
+MODELLO_ESAME = "qwen3-vl:30b-a3b-instruct"   # lo usa anche Vertov
+MODELLO_VERIFICA = "gemma4:26b"                 # lo usa anche Ozu
+MODELLI = {MODELLO_ESAME: "Qwen3-VL, esamina i fotogrammi (lo usa anche Vertov)",
+           MODELLO_VERIFICA: "Gemma 4, verifica i sospetti (lo usa anche Ozu)"}
+MODELLO_PREDEFINITO = MODELLO_ESAME
+# Cambia quando cambiano le domande fatte ai modelli o le ricerche di OWLv2: i risultati archiviati con
+# domande diverse non si riusano (vedi murnau.Analisi.archivi).
+VERSIONE_DOMANDE = 2
 MODELLO_OGGETTI = "google/owlv2-base-patch16-ensemble"
 CARTELLA_MODELLI = Path.home() / "Library" / "Application Support" / "Murnau" / "modelli"
 # I modelli di Hugging Face di Murnau stanno qui e non nella cache comune (~/.cache/huggingface):
@@ -39,7 +52,7 @@ CATEGORIE = {
     "riflessi": "Troupe nei riflessi",
     "sguardi": "Sguardo in macchina",
     "lavalier": "Microfono lavalier visibile",
-    "prese_cavi": "Prese elettriche e cavi",
+    "prese_cavi": "Cavi e prolunghe della troupe",
 }
 
 # Domande per OWLv2: (categoria, nome italiano, testo cercato).
@@ -51,10 +64,10 @@ RICERCHE = [
     ("troupe", "stativo per luci", "a lighting stand"),
     ("troupe", "proiettore da set", "a film studio light"),
     ("lavalier", "microfono lavalier", "a lavalier microphone clipped to clothing"),
-    ("prese_cavi", "presa elettrica", "an electrical wall outlet"),
-    ("prese_cavi", "presa multipla", "a power strip"),
-    ("prese_cavi", "cavo", "an electrical cable lying on the floor"),
-    ("prese_cavi", "cavo", "a power cord"),
+    ("prese_cavi", "cavo della troupe", "a thick black cable lying on the floor"),
+    ("prese_cavi", "prolunga", "an extension cord reel"),
+    ("prese_cavi", "presa multipla", "a power strip on the floor"),
+    ("prese_cavi", "nastro adesivo", "gaffer tape on the floor"),
 ]
 CATEGORIE_OGGETTI = {cat for cat, _, _ in RICERCHE}  # le categorie in cui OWLv2 cerca i sospetti
 SOGLIA_OGGETTI = 0.19     # punteggio minimo OWLv2: basso apposta, la verifica scarta i falsi. A mezza
@@ -63,8 +76,10 @@ SOGLIA_OGGETTI = 0.19     # punteggio minimo OWLv2: basso apposta, la verifica s
 ALTEZZA_VOLTO = 0.07      # volti più piccoli (frazione dell'altezza) sono troppo lontani per lo sguardo
 FRONTALITA = 0.36         # distanza tra gli occhi / larghezza del volto: sopra è frontale
 SCARTO_NASO = 0.25        # spostamento del naso dal centro degli occhi, rispetto alla loro distanza
-SOGLIA_SGUARDO = 8.0      # gradi tra lo sguardo e l'obiettivo sotto cui si segnala lo sguardo in macchina
-SGUARDO_CERTO = 4.0       # sotto questa soglia la certezza è alta
+# Gradi tra lo sguardo e l'obiettivo sotto cui si segnala lo sguardo in macchina. Severa apposta: con 8°
+# 18 segnalazioni su 20 erano attori che guardavano il partner appena accanto alla macchina da presa.
+SOGLIA_SGUARDO = 2.0
+SGUARDO_CERTO = 1.0       # sotto questa soglia la certezza è alta
 
 
 # --------------------------------------------------------------------------
@@ -202,33 +217,108 @@ class Volti:
 
 
 # --------------------------------------------------------------------------
-# Qwen3-VL
+# Modelli con visione (Ollama)
 # --------------------------------------------------------------------------
 
-def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: int = 3,
-           attesa_ollama: float = 120) -> dict:
-    """La risposta di Qwen3-VL, già letta secondo lo schema JSON. RuntimeError se non arriva.
+# Modelli che Ollama fa girare senza "risposta a schema" (per esempio quelli col motore MLX, come
+# Gemma 4): a loro lo schema si descrive nel testo e la risposta si controlla dopo.
+SENZA_SCHEMA = set()
 
-    Se Ollama si chiude a metà (per esempio va in crash), lo si riavvia e lo si aspetta fino a
-    `attesa_ollama` secondi prima di riprovare: un'analisi di ore non si perde per un singhiozzo.
-    """
-    corpo = json.dumps({
+
+def _schema_a_parole(schema: dict, rientro: str = "") -> list:
+    righe = []
+    for chiave, v in schema.get("properties", {}).items():
+        if v.get("type") == "object":
+            righe += [f'{rientro}"{chiave}": {{', *_schema_a_parole(v, rientro + "  "), f"{rientro}}}"]
+        elif "enum" in v:
+            righe.append(f'{rientro}"{chiave}": una di queste stringhe, copiata esattamente: '
+                         + " | ".join(json.dumps(e, ensure_ascii=False) for e in v["enum"]))
+        elif v.get("type") == "array":
+            righe.append(f'{rientro}"{chiave}": lista di numeri interi')
+        else:
+            righe.append(f'{rientro}"{chiave}": {v.get("type", "string")}')
+    return righe
+
+
+def _secondo_schema(valore, schema: dict):
+    """La risposta in testo resa conforme allo schema: un'opzione scritta un po' diversa diventa la più simile."""
+    if schema.get("type") == "object":
+        valore = valore if isinstance(valore, dict) else {}
+        return {k: _secondo_schema(valore.get(k), sotto) for k, sotto in schema.get("properties", {}).items()}
+    if "enum" in schema and valore not in schema["enum"]:
+        return _opzione_piu_vicina(str(valore), schema["enum"])
+    if schema.get("type") == "boolean":
+        return valore is True or str(valore).lower() in ("true", "sì", "si")
+    if schema.get("type") == "array":
+        return valore if isinstance(valore, list) else []
+    return valore if valore is not None else ""
+
+
+def _opzione_piu_vicina(risposta: str, opzioni: list) -> str:
+    """L'opzione che contiene più parole della risposta; nel dubbio la più prudente.
+
+    La più prudente è la prima delle classi (sempre «non riconoscibile» o simile) o, per la certezza,
+    «bassa»: una risposta mal scritta non deve mai diventare un errore segnalato."""
+    parole = lambda t: set(re.findall(r"\w+", t.lower()))
+    cercate = parole(risposta)
+    prudente = "bassa" if "bassa" in opzioni else opzioni[0]
+    if not cercate:
+        return prudente
+    punteggi = [(len(cercate & parole(o)) / len(cercate), difflib.SequenceMatcher(None, risposta.lower(), o.lower()).ratio(), o)
+                for o in opzioni]
+    copertura, _, migliore = max(punteggi)
+    pari = [o for c, _, o in punteggi if c == copertura]
+    return migliore if copertura >= 0.6 and len(pari) == 1 else prudente
+
+
+def _corpo(modello: str, prompt: str, immagini: list, schema: dict) -> bytes:
+    con_schema = modello not in SENZA_SCHEMA
+    if not con_schema:
+        prompt += ("\n\nRispondi SOLO con un oggetto JSON, senza altro testo, con queste chiavi:\n"
+                   + "\n".join(_schema_a_parole(schema)))
+    return json.dumps({
         "model": modello,
         "messages": [{"role": "user", "content": prompt,
                       "images": [base64.b64encode(i if isinstance(i, bytes) else Path(i).read_bytes()).decode()
                                  for i in immagini]}],
-        "format": schema, "stream": False, "think": False, "keep_alive": TENUTA,
+        **({"format": schema} if con_schema else {}), "stream": False, "think": False, "keep_alive": TENUTA,
         "options": {"temperature": 0, "num_ctx": CONTESTO, "num_predict": 900},
     }).encode()
-    for tentativo in range(1, tentativi + 1):
+
+
+def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: int = 3,
+           attesa_ollama: float = 120) -> dict:
+    """La risposta del modello, già letta secondo lo schema JSON. RuntimeError se non arriva.
+
+    Se Ollama si chiude a metà (per esempio va in crash), lo si riavvia e lo si aspetta fino a
+    `attesa_ollama` secondi prima di riprovare: un'analisi di ore non si perde per un singhiozzo.
+    """
+    tentativo = 0
+    while tentativo < tentativi:
+        tentativo += 1
         try:
-            req = urllib.request.Request(OLLAMA_URL, data=corpo, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(OLLAMA_URL, data=_corpo(modello, prompt, immagini, schema),
+                                         headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=600) as r:
                 risposta = json.load(r)
             if risposta.get("done_reason") == "length":
                 # Con temperatura 0 riprovare darebbe la stessa risposta troncata: inutile.
                 raise RuntimeError("Il modello ha dato una risposta troppo lunga, rimasta a metà.")
-            return json.loads(risposta["message"]["content"])
+            testo = risposta["message"]["content"]
+            if modello in SENZA_SCHEMA:
+                trovato = re.search(r"\{.*\}", testo, re.S)
+                if not trovato:
+                    raise ValueError(f"nessun JSON nella risposta: {testo[:80]!r}")
+                return _secondo_schema(json.loads(trovato.group(0)), schema)
+            return json.loads(testo)
+        except urllib.error.HTTPError as e:
+            if e.code == 501 and modello not in SENZA_SCHEMA:
+                SENZA_SCHEMA.add(modello)  # «structured output is unavailable»: si riprova subito a parole
+                tentativo -= 1
+                continue
+            if tentativo == tentativi:
+                raise RuntimeError(f"Il modello non ha risposto correttamente: {e}") from e
+            time.sleep(3)
         # OSError comprende la connessione rifiutata o chiusa e il tempo scaduto; ValueError il JSON
         # non valido; HTTPException le risposte interrotte a metà.
         except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as e:
@@ -242,8 +332,9 @@ def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: i
 # Cosa cercare nell'esame di ogni fotogramma, per categoria.
 VOCI_ESAME = {
     "troupe": [
-        ("boom", "un microfono boom: un'asta lunga e sottile con un microfono cilindrico o con una cuffia "
-                 "antivento pelosa, di solito entra dal bordo alto dell'inquadratura"),
+        ("boom", "un microfono boom della troupe: un'asta lunga e sottile con un microfono cilindrico o con una "
+                 "cuffia antivento pelosa, che di solito entra dal bordo alto dell'inquadratura (NON un microfono "
+                 "tenuto in mano da un personaggio o su un'asta da palco: quelli fanno parte della scena)"),
         ("attrezzatura", "una macchina da presa professionale, un cavalletto, uno stativo per luci, un pannello "
                          "luminoso o un riflettore da set (NON lampade d'arredo, luci di scena di una discoteca "
                          "o tralicci di un palco che fanno parte dell'ambiente)"),
@@ -254,16 +345,19 @@ VOCI_ESAME = {
         ("riflesso", "un riflesso (in specchi, vetri, finestre, occhiali, carrozzerie, superfici lucide) in cui "
                      "si vede chiaramente una macchina da presa, un operatore, un boom o un riflettore da set"),
     ],
-    # Gli sguardi in macchina non si chiedono a Qwen3-VL (giudica male la direzione degli occhi):
-    # li misura il modello dello sguardo.
+    # Gli sguardi in macchina non si chiedono ai modelli con visione: nessuno dei 12 provati distingue chi
+    # guarda nell'obiettivo da chi guarda un personaggio accanto alla macchina. Li misura il modello dello sguardo.
     "sguardi": [],
     "lavalier": [
         ("lavalier", "un radiomicrofono lavalier: piccola capsula, di solito nera, fissata al colletto o alla "
                      "camicia di un attore, o il suo filo visibile sul corpo"),
     ],
+    # Solo ciò che lascia la troupe: prese a muro e cavi degli oggetti di scena sono arredo (scelta
+    # dell'utente dopo la revisione: 4 segnalazioni di prese a muro su 4 erano falsi allarmi).
     "prese_cavi": [
-        ("presa", "una presa elettrica, una presa multipla o una scatola elettrica su una parete o a terra"),
-        ("cavo", "un cavo elettrico che corre a terra o lungo una parete"),
+        ("cavo_troupe", "un cavo della troupe: cavi spessi di luci, macchina da presa o audio che corrono a terra, "
+                        "prolunghe, multiprese o nastro adesivo da set (NON prese a muro, interruttori o il cavo di "
+                        "una lampada, di un elettrodomestico o di un computer che fanno parte della scena)"),
     ],
 }
 VOCE_CATEGORIA = {voce: cat for cat, voci in VOCI_ESAME.items() for voce, _ in voci}
@@ -306,7 +400,8 @@ def esamina(modello: str, fotogramma: Path, categorie: set) -> list:
 VERIFICHE = {
     "troupe": ("Che cosa c'è nel riquadro rosso (ingrandito nella seconda immagine)?",
                ["forma sfocata non riconoscibile", "oggetto di scena o d'arredo", "persona che fa parte della scena",
-                "lampada, lampadario o luce d'arredo", "lampione o luce stradale", "luci di scena o di un locale",
+                "microfono tenuto in mano da un personaggio (di scena)",
+                "microfono su asta da palco o da tavolo (di scena)", "lampada, lampadario o luce d'arredo", "lampione o luce stradale", "luci di scena o di un locale",
                 "telecamera di sorveglianza, sensore o impianto fisso", "traliccio, colonna o elemento architettonico",
                 "microfono boom o asta microfonica", "macchina da presa professionale", "cavalletto o stativo",
                 "proiettore o pannello luminoso da set", "operatore o membro della troupe al lavoro"],
@@ -323,9 +418,12 @@ VERIFICHE = {
                  {"radiomicrofono lavalier (piccola capsula con filo)", "filo di un microfono sul corpo"}),
     "prese_cavi": ("Che cosa c'è nel riquadro rosso (ingrandito nella seconda immagine)?",
                    ["oggetto non riconoscibile", "altro oggetto", "macchia, foro o ombra sulla parete",
-                    "interruttore della luce", "presa elettrica a muro", "presa multipla", "scatola o quadro elettrico",
-                    "cavo elettrico"],
-                   {"presa elettrica a muro", "presa multipla", "scatola o quadro elettrico", "cavo elettrico"}),
+                    "presa elettrica a muro o interruttore",
+                    "cavo di un oggetto di scena (lampada, elettrodomestico, computer)",
+                    "cavo della troupe a terra (luci, macchina da presa, audio)",
+                    "prolunga o multipresa della troupe", "nastro adesivo da set a terra"],
+                   {"cavo della troupe a terra (luci, macchina da presa, audio)", "prolunga o multipresa della troupe",
+                    "nastro adesivo da set a terra"}),
 }
 
 

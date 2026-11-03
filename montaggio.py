@@ -145,23 +145,41 @@ def info_video(video: Path) -> tuple:
 
 
 def rileva_bande_nere(video: Path, durata: float):
-    """Filtro crop che toglie le bande nere (letterbox), o None se non ce ne sono."""
-    aree = []
-    for frazione in (0.2, 0.4, 0.6, 0.8):
-        out = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-ss", f"{durata * frazione:.1f}", "-t", "4", "-i", str(video),
-             "-vf", "cropdetect=24:2:0", "-an", "-f", "null", "-"],
-            capture_output=True, text=True).stderr
-        trovati = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
-        if trovati:
-            aree.append(tuple(int(x) for x in trovati[-1]))
-    if not aree:
+    """Filtro crop che toglie le bande nere (letterbox o pillarbox), o None se non ce ne sono.
+
+    Una riga (o colonna) fa parte dell'immagine se la sua luminosità mediana supera il nero in almeno
+    uno dei fotogrammi campione. La mediana ignora le scritte sovraimpresse nelle bande (timecode, nome
+    del rullo, numero di scena), che occupano pochi pixel: cropdetect invece le scambiava per immagine.
+    """
+    import numpy as np
+    dim = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                          "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout.strip().split(",")
+    w, h = int(dim[0]), int(dim[1])
+    righe, colonne = [], []
+    for frazione in (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9):
+        grezzo = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{durata * frazione:.1f}",
+                                 "-i", str(video), "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "-"],
+                                capture_output=True).stdout
+        if len(grezzo) == w * h:
+            img = np.frombuffer(grezzo, np.uint8).reshape(h, w)
+            righe.append(np.median(img, axis=1))
+            colonne.append(np.median(img, axis=0))
+    if not righe:
         return None
-    # Il ritaglio più ampio tra i campioni: meglio una banda residua che tagliare l'immagine.
-    w, h, x, y = max(aree, key=lambda a: a[0] * a[1])
-    pieno = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                            "stream=width,height", "-of", "csv=p=0", str(video)],
-                           capture_output=True, text=True).stdout.strip().split(",")
-    if [str(w), str(h)] == pieno[:2] or h < 100:
+
+    def estremi(mediane):
+        dentro = np.flatnonzero(np.max(mediane, axis=0) > 10)
+        return (int(dentro[0]), int(dentro[-1]) + 1) if len(dentro) else (0, len(mediane[0]))
+
+    y0, y1 = estremi(righe)
+    x0, x1 = estremi(colonne)
+    # Un paio di pixel in più verso l'interno (il bordo tra banda e immagine è sfumato), misure pari.
+    if y0 > 0 or y1 < h:
+        y0, y1 = y0 + 2, y1 - 2
+    if x0 > 0 or x1 < w:
+        x0, x1 = x0 + 2, x1 - 2
+    x0, y0 = x0 + x0 % 2, y0 + y0 % 2
+    larghezza, altezza = (x1 - x0) // 2 * 2, (y1 - y0) // 2 * 2
+    if (larghezza, altezza) == (w, h) or altezza < 100 or larghezza < 100 or larghezza > w - 8 and altezza > h - 8:
         return None
-    return f"crop={w}:{h}:{x}:{y}"
+    return f"crop={larghezza}:{altezza}:{x0}:{y0}"

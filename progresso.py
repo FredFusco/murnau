@@ -12,7 +12,7 @@ Le stesse informazioni vanno anche nel registro delle analisi in corso, se c'è.
 # Secondi stimati per unità di lavoro di ogni fase (M5 Max, Ollama libero): servono a pesare le
 # fasi nella percentuale complessiva la prima volta; poi l'app usa i tempi misurati nelle analisi
 # precedenti su questo Mac.
-COSTI = {"fotogrammi": .04, "oggetti": .12, "volti": .08, "modello": 45.0, "esame": 4.5, "verifica": 3.5}
+COSTI = {"fotogrammi": .04, "oggetti": .12, "volti": .08, "modello": 45.0, "esame": 4.5, "verifica": 1.5}
 
 registro = None  # coordinamento.Registro dell'analisi in corso
 

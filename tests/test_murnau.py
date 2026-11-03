@@ -227,6 +227,139 @@ class Ollama(unittest.TestCase):
             s.close()
 
 
+class ModelliSenzaSchema(unittest.TestCase):
+    """Gemma 4 e gli altri modelli col motore MLX di Ollama non accettano la risposta a schema (501):
+    il JSON si chiede nel testo e la risposta si rende conforme allo schema."""
+
+    def test_ripiego_sul_testo(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        richieste = []
+
+        class Finto(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                corpo = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                richieste.append(corpo)
+                if "format" in corpo:
+                    self.send_response(501)
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"structured output is unavailable"}')
+                    return
+                testo = '```json\n{"cosa_vedo": "un microfono", "classe": "microfono in mano"}\n```'
+                risposta = json.dumps({"message": {"content": testo}, "done_reason": "stop"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(risposta)))
+                self.end_headers()
+                self.wfile.write(risposta)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Finto)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        originale = rilevatori.OLLAMA_URL
+        rilevatori.OLLAMA_URL = f"http://127.0.0.1:{server.server_address[1]}/api/chat"
+        schema = {"type": "object", "properties": {"cosa_vedo": {"type": "string"},
+                  "classe": {"type": "string", "enum": ["microfono tenuto in mano (di scena)", "microfono boom"]}}}
+        try:
+            r = rilevatori.chiedi("finto:1b", "Che cosa vedi?", [], schema, attesa_ollama=0)
+        finally:
+            rilevatori.OLLAMA_URL = originale
+            server.shutdown()
+            rilevatori.SENZA_SCHEMA.discard("finto:1b")
+        self.assertEqual(r["classe"], "microfono tenuto in mano (di scena)")  # l'opzione più simile
+        self.assertEqual(len(richieste), 2)
+        self.assertIn("SOLO con un oggetto JSON", richieste[1]["messages"][0]["content"])
+
+    def test_risposta_resa_conforme(self):
+        schema = {"type": "object", "properties": {"voce": {"type": "object", "properties": {
+            "presente": {"type": "boolean"}, "riquadro": {"type": "array", "items": {"type": "integer"}}}}}}
+        self.assertEqual(rilevatori._secondo_schema({"voce": {"presente": "true"}}, schema),
+                         {"voce": {"presente": True, "riquadro": []}})
+        opzioni = ["oggetto non riconoscibile", "microfono tenuto in mano (di scena)", "microfono boom"]
+        self.assertEqual(rilevatori._opzione_piu_vicina("un boh qualunque", opzioni), "oggetto non riconoscibile")
+        self.assertEqual(rilevatori._opzione_piu_vicina("microfono", opzioni), "oggetto non riconoscibile")  # ambiguo
+        self.assertEqual(rilevatori._opzione_piu_vicina("Microfono Boom.", opzioni), "microfono boom")
+        self.assertEqual(rilevatori._opzione_piu_vicina("forse", ["alta", "media", "bassa"]), "bassa")
+
+
+class ModelliDelleAltreApp(unittest.TestCase):
+    def test_libera_spazio_non_tocca_i_modelli_di_vertov_e_ozu(self):
+        import pulizia
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "ozu").mkdir()
+            (Path(d) / "ozu" / "motore.py").write_text('MODELLO = "gemma9:12b"\n')
+            (Path(d) / "vertov").mkdir()
+            (Path(d) / "vertov" / "app.py").write_text('    MODELLO_DESCRIZIONI = "qwen9-vl:30b"\nx = "altro:1b"\n')
+            originale, pulizia.FAMIGLIA = pulizia.FAMIGLIA, Path(d)
+            try:
+                protetti = pulizia.modelli_protetti()
+            finally:
+                pulizia.FAMIGLIA = originale
+        self.assertTrue({"gemma9:12b", "qwen9-vl:30b", *rilevatori.MODELLI} <= protetti)
+        self.assertNotIn("altro:1b", protetti)
+
+
+class BandeNere(unittest.TestCase):
+    def test_scritte_nelle_bande(self):
+        """Letterbox con scritte bianche nelle bande: si tagliano bande e scritte, non l'immagine."""
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            video = Path(d) / "v.mp4"
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                            "testsrc2=size=640x360:rate=24:duration=3", "-vf",
+                            "drawbox=0:0:640:60:black:fill,drawbox=0:300:640:60:black:fill,"
+                            "drawbox=20:20:120:14:white:fill,drawbox=400:320:90:14:white:fill",
+                            "-pix_fmt", "yuv420p", str(video)], check=True)
+            ritaglio = montaggio.rileva_bande_nere(video, 3.0)
+        w, h, x, y = (int(v) for v in ritaglio.split("=")[1].split(":"))
+        self.assertTrue(60 <= y <= 64 and 296 <= y + h <= 300 and w >= 630, ritaglio)
+
+
+class DueLivelli(unittest.TestCase):
+    """Ciò che la verifica accetta passa dalla seconda opinione: d'accordo = segnalazione, no = da controllare."""
+
+    def test_verifica_e_seconda_opinione(self):
+        import types
+        with tempfile.TemporaryDirectory() as d:
+            args = murnau.leggi_argomenti(["v.mov", "--out", d, "--categorie", "troupe,lavalier",
+                                           "--modello", "esame:1b", "--modello-verifica", "verifica:1b",
+                                           "--seconda-opinione", "esame:1b"])
+            a = murnau.Analisi(args)
+            a.lavoro.mkdir(parents=True)
+            a.fps, a.tc_inizio_s = 24.0, 0.0
+            q = types.SimpleNamespace(numero=1, inizio=0.0, fine=2.0, tc_in="00:00:00:00", tc_out="00:00:02:00",
+                                      clip="", scena=lambda: "")
+            a.inquadrature = [q]
+            a.fotogrammi = {1: [(1.0, Path(d) / "f000001.jpg")]}
+            a.archivi()
+            a.esame.metti(f"f000001.jpg|{a.chiave_cat}", [
+                {"categoria": "troupe", "voce": "boom", "descrizione": "", "riquadro": [0.1, 0.1, 0.2, 0.2]},
+                {"categoria": "lavalier", "voce": "lavalier", "descrizione": "", "riquadro": [0.5, 0.5, 0.6, 0.6]}])
+            chiamate = []
+
+            def verifica(modello, cat, immagini):
+                chiamate.append((modello, cat))
+                d_accordo = modello == "verifica:1b" or cat == "troupe"  # la seconda opinione nega il lavalier
+                return {"errore": d_accordo, "cosa_vedo": f"{modello} {cat}", "classe": "x", "certezza": "alta"}
+
+            originali = (murnau.rilevatori.verifica, murnau.passa_a, murnau.turno, murnau.immagini_sospetto)
+            murnau.rilevatori.verifica, murnau.passa_a, murnau.turno = verifica, lambda *x: None, lambda: None
+            murnau.immagini_sospetto = lambda *x: (b"jpg", b"jpg")
+            try:
+                elenco = murnau.verifica_sospetti(a)
+                rifatte = len(chiamate)
+                murnau.verifica_sospetti(a)  # ripresa: tutto è già in archivio
+            finally:
+                murnau.rilevatori.verifica, murnau.passa_a, murnau.turno, murnau.immagini_sospetto = originali
+        per_cat = {x["categoria"]: x for x in elenco}
+        self.assertFalse(per_cat["troupe"].get("da_controllare"))
+        self.assertTrue(per_cat["lavalier"]["da_controllare"])
+        self.assertEqual(per_cat["lavalier"]["certezza"], "bassa")
+        self.assertEqual(per_cat["lavalier"]["seconda_opinione"], "esame:1b lavalier")
+        self.assertEqual(rifatte, 4)
+        self.assertEqual(len(chiamate), 4, "alla ripresa le verifiche sono state rifatte")
+
+
 class Report(ConCartella):
     def test_report_esportato_autonomo_e_leggero(self):
         import cv2

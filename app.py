@@ -38,7 +38,7 @@ from sessioni import (DATI, RUOLI, _lavoro, aggiungi_materiali, assegna, carica_
 CARTELLA = Path(__file__).resolve().parent
 PORTA = 8766
 REGISTRO = DATI / "murnau.log"
-MODELLO = rilevatori.MODELLO_PREDEFINITO
+MODELLI = list(rilevatori.MODELLI)
 TIPI_IMMAGINE = {".jpg": "image/jpeg", ".png": "image/png"}
 
 
@@ -63,8 +63,17 @@ def recente(chiave: str, secondi: float, calcola):
 
 def stato_ollama() -> dict:
     installati = rilevatori._modelli_installati()
-    return {"ollama": installati is not None,
-            "modello": any(nome.startswith(MODELLO) for nome in installati or [])}
+    mancano = [m for m in MODELLI if not any(nome.startswith(m) for nome in installati or [])]
+    return {"ollama": installati is not None, "modello": not mancano, "mancano": mancano}
+
+
+def a_batteria() -> bool:
+    """True se il Mac va a batteria: la GPU rallenta e un'analisi dura circa il doppio."""
+    try:
+        return "Battery Power" in subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True,
+                                                 timeout=3).stdout.splitlines()[0]
+    except (OSError, IndexError, subprocess.SubprocessError):
+        return False
 
 
 def versione_segnalazioni(out: Path) -> str:
@@ -219,7 +228,7 @@ class Gestore(BaseHTTPRequestHandler):
                                 "attesa": a.get("attesa", ""), "out": a.get("out", "")})
             versione = versione_segnalazioni(out)
             self._json({"progetto": p, "lavoro": LAVORO.stato(), "mancanti": mancanti, "esterne": esterne,
-                        **recente("ollama", 10, stato_ollama),
+                        **recente("ollama", 10, stato_ollama), "batteria": recente("batteria", 10, a_batteria),
                         "risultati": bool(versione), "esportabili": bool(versione), "versione": versione,
                         "categorie": rilevatori.CATEGORIE})
         elif url.path == "/api/sessioni":
@@ -230,7 +239,7 @@ class Gestore(BaseHTTPRequestHandler):
             self._json({"installazione": aggiornamenti.INSTALLAZIONE, "versione": aggiornamenti.versione(),
                         "automatico": aggiornamenti.leggi_stato().get("automatico", True)})
         elif url.path == "/api/pulizia":
-            self._json({"voci": pulizia.voci(MODELLO)})
+            self._json({"voci": pulizia.voci()})
         elif url.path == "/file":
             # Solo le immagini dentro la cartella di lavoro.
             relativo = parse_qs(url.query).get("p", [""])[0]
@@ -326,11 +335,11 @@ class Gestore(BaseHTTPRequestHandler):
                     if not manuale and not aggiornamenti.da_controllare():
                         self._json({"da_fare": False})
                     else:
-                        self._json(aggiornamenti.controlla(MODELLO, manuale))
+                        self._json(aggiornamenti.controlla(manuale))
                 elif azione == "installa":
                     if LAVORO.attivo():
                         raise RuntimeError("Aspetta che finisca l'analisi in corso, o fermala, prima di aggiornare.")
-                    aggiornamenti.installa(corpo.get("voci") or [], MODELLO)
+                    aggiornamenti.installa(corpo.get("voci") or [])
                     self._json({"ok": True})
                 elif azione == "salta":
                     aggiornamenti.salta(corpo.get("voci") or [])
@@ -347,7 +356,7 @@ class Gestore(BaseHTTPRequestHandler):
             elif url.path == "/api/pulizia":
                 if LAVORO.attivo() or aggiornamenti.INSTALLAZIONE["attiva"]:
                     raise RuntimeError("Aspetta che finisca il lavoro in corso prima di liberare spazio.")
-                self._json({"liberati": pulizia.cancella(corpo.get("chiavi") or [], MODELLO)})
+                self._json({"liberati": pulizia.cancella(corpo.get("chiavi") or [])})
             elif url.path == "/api/apri":
                 cosa = corpo.get("cosa")
                 if cosa == "registro":

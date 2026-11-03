@@ -10,8 +10,8 @@ tagli da solo) e segnala, inquadratura per inquadratura:
   - prese elettriche e cavi
 
 Tutto avviene su questo computer: OWLv2 e YuNet trovano i sospetti, Qwen3-VL
-(tramite Ollama) esamina i fotogrammi e verifica ogni sospetto su un ritaglio
-ingrandito.
+(tramite Ollama) esamina i fotogrammi e Gemma 4 verifica ogni sospetto su un
+ritaglio ingrandito.
 
     python murnau.py FILM.mov --montaggio FILM.aaf --out risultati
 
@@ -52,7 +52,9 @@ class Analisi:
     def __init__(self, args):
         self.args = args
         self.video: Path = args.video
-        self.modello: str = args.modello
+        self.modello: str = args.modello                    # esame dei fotogrammi
+        self.modello_verifica: str = args.modello_verifica  # verifica dei sospetti
+        self.seconda_opinione: str = args.seconda_opinione  # ricontrolla ciò che la verifica accetta ("" = no)
         self.categorie = {c.strip() for c in args.categorie.split(",") if c.strip()}
         self.out: Path = args.out
         self.lavoro = self.out / "lavoro"
@@ -76,10 +78,18 @@ class Analisi:
         return [p for q in self.inquadrature for _, p in self.fotogrammi[q.numero]]
 
     def archivi(self) -> None:
-        self.oggetti = Archivio(self.lavoro / "oggetti.jsonl")
+        # I risultati dipendono dal modello e dalle domande: con un altro modello o domande nuove si
+        # riparte da file nuovi, e quelli vecchi restano dove sono.
+        v = rilevatori.VERSIONE_DOMANDE
+        self.oggetti = Archivio(self.lavoro / f"oggetti_v{v}.jsonl")
         self.volti = Archivio(self.lavoro / "sguardi.jsonl")
-        self.esame = Archivio(self.lavoro / "esame.jsonl")
-        self.verifiche = Archivio(self.lavoro / "verifiche.jsonl")
+        self.esame = Archivio(self.lavoro / f"esame_{_nome_file(self.modello)}_v{v}.jsonl")
+        self.verifiche = Archivio(self.lavoro / f"verifiche_{_nome_file(self.modello_verifica)}_v{v}.jsonl")
+        self.seconde = Archivio(self.lavoro / f"seconde_{_nome_file(self.seconda_opinione or 'nessuna')}_v{v}.jsonl")
+
+
+def _nome_file(modello: str) -> str:
+    return re.sub(r"[^\w.-]", "_", modello)
 
 
 _ULTIMO_TURNO = [0.0]
@@ -101,7 +111,8 @@ def chiusura(a: Analisi) -> None:
         progresso.registro.chiudi()
         if progresso.registro.dati["origine"] == "terminale":
             coordinamento.notifica(f"{'Analisi finita' if a.finita else 'Analisi interrotta'}: {a.video.name}")
-    coordinamento.libera_modello(a.modello, rilevatori.CONTESTO)
+    for modello in {a.modello, a.modello_verifica, a.seconda_opinione} - {""}:
+        coordinamento.libera_modello(modello, rilevatori.CONTESTO)
 
 
 # --------------------------------------------------------------------------
@@ -285,16 +296,24 @@ def rileva_volti(a: Analisi) -> None:
 # 5. Esame dei fotogrammi con Qwen3-VL
 # --------------------------------------------------------------------------
 
-def prepara_modello(a: Analisi) -> None:
+def prepara_modelli(a: Analisi) -> None:
     rilevatori.avvia_ollama()
-    if not rilevatori.modello_installato(a.modello):
-        sys.exit(f"Ollama non è acceso o manca il modello {a.modello}.")
+    for modello in [a.modello, a.modello_verifica] + ([a.seconda_opinione] if a.seconda_opinione else []):
+        if not rilevatori.modello_installato(modello):
+            sys.exit(f"Ollama non è acceso o manca il modello {modello}.")
     turno()
     if not rilevatori.modello_caricato(a.modello):
         # Il primo caricamento di Qwen3-VL in memoria richiede da mezzo minuto a un minuto e mezzo.
         fase("modello")
         rilevatori.carica_modello(a.modello)
         avanzamento("modello", 1, 1)
+
+
+def passa_a(modello: str, da: str) -> None:
+    """Un modello alla volta in memoria: quello che ha finito lascia il posto al prossimo (pochi secondi)."""
+    if modello != da:
+        coordinamento.libera_modello(da, rilevatori.CONTESTO)
+        rilevatori.carica_modello(modello)
 
 
 def esamina_fotogrammi(a: Analisi, fotogrammi: list) -> None:
@@ -434,19 +453,37 @@ def segnala_sguardo(a: Analisi, s: Segnalazioni, q) -> None:
 
 
 def verifica_sospetti(a: Analisi) -> list:
-    """Ogni sospetto passa una seconda volta da Qwen3-VL, su un ritaglio ingrandito: solo ciò che supera
-    la verifica diventa una segnalazione (al più una per inquadratura e categoria)."""
+    """Verifica a due livelli. Ogni sospetto passa dal modello di verifica (Gemma 4), su un ritaglio
+    ingrandito; ciò che accetta (al più un sospetto per inquadratura e categoria) passa poi dalla seconda
+    opinione (Qwen3-VL). Se sono d'accordo è una segnalazione normale; se no resta, ma «da controllare».
+    Così non sparisce nulla in silenzio, e le revisioni dell'utente diranno quale dei due ha ragione."""
     fase("verifica")
+    passa_a(a.modello_verifica, a.modello)
     s = Segnalazioni(a)
     da_verificare = {(q.numero, cat): sospetti_di(a, q, cat)
                      for q in a.inquadrature for cat in a.categorie if cat != "sguardi"}
-    # Quante chiamate a Qwen3-VL servono al massimo (quelle non ancora fatte): la barra avanza a ogni
-    # chiamata. Il conteggio è per eccesso, perché ci si ferma al primo sospetto confermato.
+    # Quante chiamate servono al massimo (quelle non ancora fatte): la barra avanza a ogni chiamata. Il
+    # conteggio è per eccesso, perché ci si ferma al primo sospetto accettato; le seconde opinioni si
+    # aggiungono quando se ne conosce il numero.
     chiamate = sum(1 for (_, cat), lista in da_verificare.items() for _, p, riquadro, _, _ in lista[:MAX_VERIFICHE]
                    if f"{p.name}|{cat}|{riquadro}" not in a.verifiche)
     piano(verifica=chiamate)
-    fatte = 0
+    conta = {"fatte": 0, "totale": chiamate}
 
+    def chiama(archivio: Archivio, modello: str, k: str, cat: str, immagini: list, q) -> dict:
+        if k not in archivio:
+            try:
+                turno()
+                archivio.metti(k, rilevatori.verifica(modello, cat, immagini))
+            except RuntimeError as e:
+                print(f"Inquadratura {q.numero}: {e}")
+                return None
+            finally:
+                conta["fatte"] += 1
+                avanzamento("verifica", min(conta["fatte"], conta["totale"]), max(conta["totale"], 1))
+        return archivio[k]
+
+    accettati = []
     for q in a.inquadrature:
         for cat in (c for c in CATEGORIE if c in a.categorie):
             if cat == "sguardi":
@@ -468,26 +505,31 @@ def verifica_sospetti(a: Analisi) -> list:
                     print(f"Inquadratura {q.numero}: {e}")
                     a.illeggibili.add(p.name)
                     continue
-                if k not in a.verifiche:
-                    try:
-                        turno()
-                        a.verifiche.metti(k, rilevatori.verifica(a.modello, cat, [segnato, dettaglio]))
-                    except RuntimeError as e:
-                        print(f"Inquadratura {q.numero}: {e}")
-                        a.non_verificate.add(q.numero)
-                        continue
-                    finally:
-                        fatte += 1
-                        avanzamento("verifica", min(fatte, chiamate), max(chiamate, 1))
-                v = a.verifiche[k]
+                v = chiama(a.verifiche, a.modello_verifica, k, cat, [segnato, dettaglio], q)
+                if v is None:
+                    a.non_verificate.add(q.numero)
+                    continue
                 if not v.get("errore"):
                     scartati.append(riquadro)
                     continue
-                s.aggiungi(q, cat, p, riquadro, segnato, dettaglio, {
+                accettati.append((q, cat, p, riquadro, segnato, dettaglio, k, {
                     "descrizione": v.get("cosa_vedo", ""), "certezza": v.get("certezza", "media"),
-                    "oggetto": v.get("classe") or oggetto, "origine": origine, "fotogrammi_sospetti": visti})
+                    "oggetto": v.get("classe") or oggetto, "origine": origine, "fotogrammi_sospetti": visti}))
                 break
-    return s.elenco
+
+    if a.seconda_opinione and a.seconda_opinione != a.modello_verifica:
+        conta["totale"] = conta["fatte"] + sum(1 for x in accettati if x[6] not in a.seconde)
+        piano(verifica=conta["totale"])
+        passa_a(a.seconda_opinione, a.modello_verifica)
+    for q, cat, p, riquadro, segnato, dettaglio, k, campi in accettati:
+        if a.seconda_opinione and a.seconda_opinione != a.modello_verifica:
+            seconda = chiama(a.seconde, a.seconda_opinione, k, cat, [segnato, dettaglio], q)
+            if not (seconda and seconda.get("errore")):
+                campi = {**campi, "certezza": "bassa", "da_controllare": True,
+                         "seconda_opinione": (seconda or {}).get("cosa_vedo") or "non disponibile"}
+        s.aggiungi(q, cat, p, riquadro, segnato, dettaglio, campi)
+    ordine = list(CATEGORIE)
+    return sorted(s.elenco, key=lambda x: (x["numero"], ordine.index(x["categoria"])))
 
 
 # --------------------------------------------------------------------------
@@ -504,14 +546,18 @@ def concludi(a: Analisi, segnalazioni: list) -> None:
         avviso(f"{quanti(len(a.illeggibili), 'fotogramma non si è potuto leggere ed è stato saltato', 'fotogrammi non si sono potuti leggere e sono stati saltati')}"
                f": forse il disco ha dato un errore. Cancellando i fotogrammi con «Libera spazio…» e rilanciando "
                f"vengono ricreati.")
+    dubbie = sum(1 for x in segnalazioni if x.get("da_controllare"))
+    if dubbie:
+        avviso(f"{quanti(dubbie, 'segnalazione è da controllare', 'segnalazioni sono da controllare')}: "
+               f"la verifica le ritiene errori, la seconda opinione no. Le trovi con il filtro «Da controllare».")
     esaminabili = [x for x in a.non_esaminati if x not in a.illeggibili]
     if esaminabili:
         avviso(f"{quanti(len(esaminabili), 'fotogramma non è stato esaminato', 'fotogrammi non sono stati esaminati')}"
-               f": Qwen3-VL non ha risposto. Rilanciando l'analisi vengono ripresi solo quelli.")
+               f": il modello ({a.modello}) non ha risposto. Rilanciando l'analisi vengono ripresi solo quelli.")
     if a.non_verificate:
         avviso(f"In {quanti(len(a.non_verificate), 'inquadratura', 'inquadrature')} alcuni sospetti non sono stati "
-               f"verificati: Qwen3-VL non ha risposto (inquadrature {elenco(a.non_verificate)}). Rilanciando "
-               f"l'analisi vengono ripresi.")
+               f"verificati: il modello ({a.modello_verifica}) non ha risposto (inquadrature "
+               f"{elenco(a.non_verificate)}). Rilanciando l'analisi vengono ripresi.")
     senza_foto = [q.numero for q in a.inquadrature if not a.fotogrammi[q.numero]]
     if senza_foto:
         avviso(f"{quanti(len(senza_foto), 'inquadratura non controllata', 'inquadrature non controllate')} perché "
@@ -539,7 +585,10 @@ def leggi_argomenti(argv=None):
                     help="secondi tra un fotogramma e l'altro per oggetti e volti (predefinito 1)")
     ap.add_argument("--accurato", action="store_true",
                     help="Qwen3-VL esamina un fotogramma ogni 2 secondi invece di 1-4 per inquadratura (più lento)")
-    ap.add_argument("--modello", default=rilevatori.MODELLO_PREDEFINITO)
+    ap.add_argument("--modello", default=rilevatori.MODELLO_ESAME, help="modello che esamina i fotogrammi")
+    ap.add_argument("--modello-verifica", default=rilevatori.MODELLO_VERIFICA, help="modello che verifica i sospetti")
+    ap.add_argument("--seconda-opinione", default=rilevatori.MODELLO_ESAME,
+                    help="modello che ricontrolla ciò che la verifica accetta (\"\" per non ricontrollare)")
     ap.add_argument("--tc-inizio", help="timecode del primo fotogramma del video, se il file non lo dichiara")
     ap.add_argument("--da", type=int, default=1, help="prima inquadratura da analizzare")
     ap.add_argument("--a", type=int, help="ultima inquadratura da analizzare")
@@ -578,7 +627,7 @@ def main() -> None:
     rileva_volti(a)
     # Ora i sospetti di OWLv2 sono noti: la stima delle verifiche diventa molto più precisa.
     piano(verifica=stima_verifiche(a, len(esami)))
-    prepara_modello(a)
+    prepara_modelli(a)
     esamina_fotogrammi(a, esami)
     concludi(a, verifica_sospetti(a))
 

@@ -7,12 +7,12 @@ Si controllano:
   i file sostituiti vengono conservati per poter tornare indietro. Senza indirizzo
   questa parte si salta;
 - i programmi installati con Homebrew: ffmpeg (fotogrammi) e Ollama (che fa girare
-  Qwen3-VL);
+  Qwen3-VL e Gemma 4);
 - le librerie Python dell'ambiente (pywebview, OpenCV, PyTorch, Transformers…):
   l'ambiente è condiviso con Vertov, quindi dopo l'aggiornamento si verifica che si
   carichino le librerie di entrambe le app, e se qualcosa non va si torna alle
   versioni di prima;
-- i modelli: Qwen3-VL (registro di Ollama) e OWLv2 (Hugging Face).
+- i modelli: Qwen3-VL e Gemma 4 (registro di Ollama) e OWLv2 (Hugging Face).
 
 Annuncio (murnau.json):
     {"versione": "1.1.0", "data": "2026-11-20", "novita": ["…", "…"],
@@ -48,7 +48,7 @@ OGNI = 24 * 3600  # controllo automatico al massimo una volta al giorno
 INTOCCABILI = {"prova_risultati", "dist", "__pycache__", "Murnau – file di lavoro"}
 
 PROGRAMMI = {"ffmpeg": "estrae i fotogrammi dal film",
-             "ollama": "fa girare Qwen3-VL sul Mac"}
+             "ollama": "fa girare Qwen3-VL e Gemma 4 sul Mac"}
 MODELLI_HF = {rilevatori.MODELLO_OGGETTI: "OWLv2, cerca microfoni, macchine da presa, stativi, prese e cavi"}
 # Moduli che devono caricarsi dopo un aggiornamento delle librerie: quelli di Murnau e,
 # dato che l'ambiente è lo stesso, anche quelli di Vertov.
@@ -172,8 +172,7 @@ def controlla_modello_visione(modello: str) -> list:
     if remota == locali[modello]:
         return []
     return [{"chiave": "ollama:" + modello, "gruppo": "modello", "nome": modello,
-             "descrizione": "Qwen3-VL, esamina i fotogrammi e verifica i sospetti (download di circa 20 GB; "
-                            "lo usa anche Vertov)",
+             "descrizione": rilevatori.MODELLI[modello] + " (download di circa 20 GB)",
              "attuale": locali[modello][:12], "nuova": remota[:12], "impronta": remota}]
 
 
@@ -192,7 +191,7 @@ def controlla_modelli_hf() -> list:
     return voci
 
 
-def controlla(modello: str, manuale: bool = False) -> dict:
+def controlla(manuale: bool = False) -> dict:
     """Cerca aggiornamenti di tutto. Se automatico, non ripropone quelli saltati."""
     stato = leggi_stato()
     esito = {"versione": versione(), "voci": [], "errori": [], "configurato": True,
@@ -203,7 +202,7 @@ def controlla(modello: str, manuale: bool = False) -> dict:
     except Exception as e:
         esito["errori"].append(f"Murnau: {_messaggio(e)}")
     for nome, funzione in [("programmi", controlla_programmi), ("librerie", controlla_librerie),
-                           ("Qwen3-VL", lambda: controlla_modello_visione(modello)),
+                           *[(m, lambda m=m: controlla_modello_visione(m)) for m in rilevatori.MODELLI],
                            ("OWLv2", controlla_modelli_hf)]:
         try:
             esito["voci"] += funzione()
@@ -330,7 +329,7 @@ def _installa_librerie(nomi: list) -> None:
 
 
 def _installa_modello_visione(modello: str) -> None:
-    _fase("Aggiorno Qwen3-VL (MB)")
+    _fase(f"Aggiorno {modello} (MB)")
     corpo = json.dumps({"model": modello, "stream": True}).encode()
     richiesta = urllib.request.Request(f"{OLLAMA}/api/pull", data=corpo, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(richiesta, timeout=None) as r:
@@ -351,7 +350,7 @@ def _installa_modello_hf(repo: str) -> None:
         raise RuntimeError("download non riuscito: " + (r.stderr.strip().splitlines() or ["errore"])[-1])
 
 
-def installa(voci: list, modello: str) -> None:
+def installa(voci: list) -> None:
     if INSTALLAZIONE["attiva"]:
         raise RuntimeError("Un aggiornamento è già in corso.")
     INSTALLAZIONE.update(attiva=True, errore="", riavvia=False, fatto=False, fase="", fatti=0, totale=0,
@@ -367,7 +366,7 @@ def installa(voci: list, modello: str) -> None:
                       lambda: _installa_programmi([v["nome"] for v in per_gruppo["programma"]])))
     for v in per_gruppo["modello"]:
         if v["chiave"].startswith("ollama:"):
-            passi.append((v["nome"], lambda: _installa_modello_visione(modello)))
+            passi.append((v["nome"], lambda m=v["nome"]: _installa_modello_visione(m)))
         else:
             passi.append((v["nome"], lambda repo=v["repo"]: _installa_modello_hf(repo)))
     for v in per_gruppo["app"]:
