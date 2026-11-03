@@ -3,6 +3,9 @@
 Avvia murnau.py in un processo a parte, ne legge le righe "@@" (vedi progresso.py) per
 fase, avanzamento, percentuale complessiva e tempo restante, e a fine lavoro prepara
 l'esito da mostrare: tutto a posto, cose da verificare o un errore spiegato in parole semplici.
+
+Una coda di sessioni (per esempio i rulli di un film) si analizza una dopo l'altra, anche di
+notte: a fine coda un solo riquadro riassume com'è andata ciascuna.
 """
 
 import json
@@ -23,6 +26,17 @@ from archivi import scrivi_json
 
 CARTELLA = Path(__file__).resolve().parent
 FILE_VELOCITA = sessioni.DATI / "velocita.json"  # secondi per unità di ogni fase, misurati nelle analisi precedenti
+FILE_CODA = sessioni.DATI / "coda.json"          # sessioni in attesa di essere analizzate, in ordine
+
+
+def analizzabile(p: dict) -> None:
+    """RuntimeError se la sessione non si può analizzare, con il motivo in parole semplici."""
+    if not p.get("video"):
+        raise RuntimeError("Scegli prima il film da analizzare.")
+    if not Path(p["video"]).exists():
+        raise RuntimeError("Il film non si trova più: trascinalo di nuovo nei materiali.")
+    if not p.get("categorie"):
+        raise RuntimeError("Scegli almeno un tipo di errore da cercare.")
 
 
 def comando(p: dict) -> list:
@@ -61,12 +75,19 @@ class Lavoro:
         self.esito = None     # com'è andata, da mostrare finché l'utente non preme OK
         self.codice = None
         self.sessione = ""
+        self.nome_sessione = ""
         self.blocco = threading.Lock()
+        try:
+            self.coda = [x for x in json.loads(FILE_CODA.read_text()) if isinstance(x, str)]
+        except (OSError, ValueError):
+            self.coda = []
+        self.in_coda = False  # la coda sta andando: a fine analisi parte la prossima
+        self.esiti_coda = []  # (nome della sessione, esito) delle analisi della coda in corso
 
     def attivo(self) -> bool:
         return self.processo is not None and self.processo.poll() is None
 
-    def avvia(self, cmd: list, sessione: str) -> None:
+    def avvia(self, cmd: list, sessione: str, nome: str = "") -> None:
         with self.blocco:
             if self.attivo():
                 raise RuntimeError("C'è già un'analisi in corso.")
@@ -75,6 +96,7 @@ class Lavoro:
                 raise RuntimeError("C'è già un'analisi di Murnau in corso, avviata fuori dall'app: due analisi "
                                    "insieme si rubano il modello a vicenda. Fermala o aspetta che finisca.")
             self.fase, self.avanz, self.piano, self.codice, self.sessione = "avvio", {}, {}, None, sessione
+            self.nome_sessione = nome
             self.mostrata = 0
             self.attesa = ""
             self.avvisi, self.fermata, self.esito = [], False, None
@@ -115,9 +137,64 @@ class Lavoro:
                 self.log.append(riga)
         self.codice = self.processo.wait()
         self._impara()
-        if not self.fermata:
-            self.esito = esito_del_lavoro(self)
-            avvisa_fine(self.esito)
+        if self.fermata:
+            self.in_coda = False  # Ferma ferma anche la coda: le sessioni non ancora analizzate restano in coda
+            return
+        esito = esito_del_lavoro(self)
+        if not self.in_coda:
+            self.esito = esito
+            avvisa_fine(esito)
+            return
+        self.esiti_coda.append((self.nome_sessione, esito))
+        self.prossima_in_coda()
+
+    # ---------------- coda ----------------
+
+    def _salva_coda(self) -> None:
+        try:
+            FILE_CODA.parent.mkdir(parents=True, exist_ok=True)
+            scrivi_json(FILE_CODA, self.coda)
+        except OSError:
+            pass
+
+    def metti_in_coda(self, p: dict) -> None:
+        analizzabile(p)
+        if p["id"] not in self.coda and not (self.attivo() and self.sessione == p["id"]):
+            self.coda.append(p["id"])
+            self._salva_coda()
+
+    def togli_dalla_coda(self, id_: str) -> None:
+        if id_ in self.coda:
+            self.coda.remove(id_)
+            self._salva_coda()
+
+    def avvia_coda(self) -> None:
+        if self.attivo():
+            raise RuntimeError("C'è già un'analisi in corso: la coda partirà da sola alla fine.") if self.in_coda \
+                else RuntimeError("C'è un'analisi in corso: aspetta che finisca, o fermala, prima di avviare la coda.")
+        if not self.coda:
+            raise RuntimeError("La coda è vuota: aggiungi le sessioni con «Metti in coda».")
+        self.in_coda, self.esiti_coda, self.esito = True, [], None
+        self.prossima_in_coda()
+
+    def prossima_in_coda(self) -> None:
+        """Avvia la prossima sessione della coda; se non ce ne sono più, prepara il riepilogo."""
+        while self.coda:
+            id_ = self.coda.pop(0)
+            self._salva_coda()
+            nome = id_
+            try:
+                p = sessioni.leggi_sessione(id_)
+                nome = p.get("nome") or id_
+                analizzabile(p)
+                self.avvia(comando(p), p["id"], nome)
+                return
+            except (OSError, ValueError, RuntimeError) as e:
+                # Una sessione che non parte (film spostato, sessione eliminata) non ferma le altre.
+                self.esiti_coda.append((nome, {"stato": "errore", "punti": [f"Motivo: {e}"], "segnalazioni": None}))
+        self.in_coda = False
+        self.esito = riepilogo_coda(self.esiti_coda)
+        avvisa_fine(self.esito)
 
     def _misura(self, nome: str):
         """Secondi per unità della fase, misurati in questa analisi (None se non ancora misurabili)."""
@@ -225,11 +302,46 @@ class Lavoro:
         return {"attivo": self.attivo(), "fase": self.fase, "avanzamento": avanz, "codice": self.codice,
                 "complessivo": self.complessivo(), "attesa": self.attesa if self.attivo() else "",
                 "fermata": self.fermata, "esito": self.esito,
-                "sessione": self.sessione, "durata": time.time() - self.inizio if self.inizio else 0,
+                "sessione": self.sessione, "nome_sessione": self.nome_sessione,
+                "coda": self.elenco_coda(), "in_coda": self.in_coda, "fatte_in_coda": len(self.esiti_coda), "durata": time.time() - self.inizio if self.inizio else 0,
                 "log": list(self.log)[-40:]}
 
 
+    def elenco_coda(self) -> list:
+        elenco = []
+        for id_ in self.coda:
+            try:
+                p = sessioni.leggi_sessione(id_)
+                elenco.append({"id": id_, "nome": p.get("nome", ""), "video": Path(p.get("video") or "").name})
+            except (OSError, ValueError):
+                elenco.append({"id": id_, "nome": "(sessione non leggibile)", "video": ""})
+        return elenco
+
+
 LAVORO = Lavoro()
+
+
+def riepilogo_coda(esiti: list) -> dict:
+    """Un solo esito per tutta la coda: una riga per sessione, lo stato peggiore in testa."""
+    peso = {"ok": 0, "verifica": 1, "errore": 2}
+    punti = []
+    for nome, e in esiti:
+        if e["stato"] == "errore":
+            motivo = next((x[len("Motivo: "):] for x in e["punti"] if x.startswith("Motivo: ")), "errore")
+            punti.append(f"{nome}: interrotta. {motivo}")
+        else:
+            n = e.get("segnalazioni")
+            riga = f"{nome}: " + ("analizzata" if n is None else
+                                  "nessuna segnalazione" if n == 0 else
+                                  "1 segnalazione" if n == 1 else f"{n} segnalazioni")
+            if e["punti"]:
+                riga += " · " + " ".join(e["punti"])
+            punti.append(riga)
+    stato = max((e["stato"] for _, e in esiti), key=peso.get, default="ok")
+    totale = sum(e.get("segnalazioni") or 0 for _, e in esiti)
+    quante = len(esiti)
+    return {"stato": stato, "coda": True, "punti": punti, "segnalazioni": totale,
+            "titolo": f"Coda finita: {quante} {'sessione analizzata' if quante == 1 else 'sessioni analizzate'}"}
 
 
 def _ultimo_errore(log: list) -> str:

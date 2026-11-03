@@ -360,6 +360,58 @@ class DueLivelli(unittest.TestCase):
         self.assertEqual(len(chiamate), 4, "alla ripresa le verifiche sono state rifatte")
 
 
+class Coda(ConCartella):
+    """Più sessioni analizzate una dopo l'altra; una che non parte non ferma le altre; un solo riepilogo."""
+
+    def test_coda_di_tre_sessioni(self):
+        import subprocess as sp
+        originali = (lavoro.comando, lavoro.avvisa_fine, lavoro.FILE_CODA, lavoro.coordinamento.analisi_in_corso)
+        avvisi = []
+        lavoro.comando = lambda p: [sys.executable, "-c", "print('@@fase fine')"]
+        lavoro.avvisa_fine = avvisi.append
+        lavoro.FILE_CODA = self.d / "coda.json"
+        lavoro.coordinamento.analisi_in_corso = lambda: []
+        try:
+            l = lavoro.Lavoro()
+            film = []
+            for nome in ("Rullo uno", "Rullo due", "Rullo tre"):
+                video = self.d / f"{nome}.mov"
+                video.write_text("finto")
+                film.append(video)
+                l.metti_in_coda(sessioni.nuova_sessione(nome, {"video": str(video)}))
+            self.assertEqual([x["nome"] for x in l.elenco_coda()], ["Rullo uno", "Rullo due", "Rullo tre"])
+            self.assertEqual(len(json.loads(lavoro.FILE_CODA.read_text())), 3, "la coda non è salvata")
+            film[1].unlink()  # il secondo film non c'è più: la coda deve andare avanti lo stesso
+            l.avvia_coda()
+            limite = time.time() + 20
+            while l.in_coda and time.time() < limite:
+                time.sleep(0.05)
+        finally:
+            lavoro.comando, lavoro.avvisa_fine, lavoro.FILE_CODA, lavoro.coordinamento.analisi_in_corso = originali
+        self.assertFalse(l.in_coda)
+        self.assertEqual(l.coda, [])
+        self.assertEqual(len(avvisi), 1, "a fine coda serve un solo avviso")
+        e = l.esito
+        self.assertTrue(e["coda"])
+        self.assertEqual(e["stato"], "errore")
+        self.assertEqual(len(e["punti"]), 3)
+        self.assertIn("Rullo due: interrotta", e["punti"][1])
+        self.assertTrue(e["punti"][2].startswith("Rullo tre"))
+
+    def test_sessione_senza_film_non_entra_in_coda(self):
+        l = lavoro.Lavoro()
+        l.coda = []
+        with self.assertRaises(RuntimeError):
+            l.metti_in_coda(sessioni.nuova_sessione("Vuota"))
+
+
+class SguardiComparse(unittest.TestCase):
+    def test_soglie(self):
+        comparsa, protagonista = [0.1, 0.1, 0.15, 0.17], [0.3, 0.1, 0.6, 0.5]
+        self.assertEqual(rilevatori.soglia_sguardo(comparsa), rilevatori.SOGLIA_SGUARDO_COMPARSE)
+        self.assertEqual(rilevatori.soglia_sguardo(protagonista), rilevatori.SOGLIA_SGUARDO)
+
+
 class Report(ConCartella):
     def test_report_esportato_autonomo_e_leggero(self):
         import cv2

@@ -24,6 +24,7 @@ import argparse
 import atexit
 import json
 import math
+import os
 import re
 import shutil
 import signal
@@ -82,7 +83,7 @@ class Analisi:
         # riparte da file nuovi, e quelli vecchi restano dove sono.
         v = rilevatori.VERSIONE_DOMANDE
         self.oggetti = Archivio(self.lavoro / f"oggetti_v{v}.jsonl")
-        self.volti = Archivio(self.lavoro / "sguardi.jsonl")
+        self.volti = Archivio(self.lavoro / f"sguardi_v{rilevatori.VERSIONE_SGUARDI}.jsonl")
         self.esame = Archivio(self.lavoro / f"esame_{_nome_file(self.modello)}_v{v}.jsonl")
         self.verifiche = Archivio(self.lavoro / f"verifiche_{_nome_file(self.modello_verifica)}_v{v}.jsonl")
         self.seconde = Archivio(self.lavoro / f"seconde_{_nome_file(self.seconda_opinione or 'nessuna')}_v{v}.jsonl")
@@ -101,6 +102,16 @@ def turno() -> None:
     if time.time() - _ULTIMO_TURNO[0] > 30:
         coordinamento.aspetta_il_turno(progresso.attesa)
         _ULTIMO_TURNO[0] = time.time()
+
+
+def tieni_sveglio() -> None:
+    """Il Mac non va in stop finché dura l'analisi (lo schermo invece può spegnersi): un'analisi lanciata
+    la sera non si ferma a metà. caffeinate esce da solo quando l'analisi finisce, in qualunque modo."""
+    try:
+        subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass  # senza caffeinate l'analisi va avanti lo stesso
 
 
 def chiusura(a: Analisi) -> None:
@@ -437,17 +448,20 @@ class Segnalazioni:
 def segnala_sguardo(a: Analisi, s: Segnalazioni, q) -> None:
     """Gli sguardi sono misurati dal modello dello sguardo: nessuna verifica di Qwen3-VL."""
     trovati = sorted(((v["angolo"], p, v) for _, p in a.fotogrammi[q.numero] for v in a.volti.get(p.name, [])
-                      if v["angolo"] <= rilevatori.SOGLIA_SGUARDO), key=lambda x: x[0])
+                      if v["angolo"] <= rilevatori.soglia_sguardo(v["riquadro"])), key=lambda x: x[0])
     for angolo, p, v in trovati:
         try:
             segnato, dettaglio = immagini_sospetto(p, v["riquadro"], "sguardi")
         except OSError:
             a.illeggibili.add(p.name)
             continue
+        di_comparsa = rilevatori.comparsa(v["riquadro"])
         s.aggiungi(q, "sguardi", p, v["riquadro"], segnato, dettaglio, {
-            "descrizione": f"Sguardo a {angolo:.0f}° dall'obiettivo "
+            "descrizione": f"{'Comparsa che guarda' if di_comparsa else 'Sguardo'} a {angolo:.0f}° dall'obiettivo "
                            f"({v['orizzontale']:+.0f}° in orizzontale, {v['verticale']:+.0f}° in verticale).",
-            "certezza": "alta" if angolo <= rilevatori.SGUARDO_CERTO else "media",
+            "certezza": ("alta" if angolo <= rilevatori.SGUARDO_CERTO else "media") if di_comparsa else "bassa",
+            **({} if di_comparsa else {"da_controllare": True, "seconda_opinione":
+                "volto in primo piano: potrebbe guardare un personaggio appena accanto alla macchina da presa"}),
             "oggetto": "volto", "origine": "sguardo", "fotogrammi_sospetti": len({x[1].name for x in trovati})})
         return
 
@@ -458,10 +472,11 @@ def verifica_sospetti(a: Analisi) -> list:
     opinione (Qwen3-VL). Se sono d'accordo è una segnalazione normale; se no resta, ma «da controllare».
     Così non sparisce nulla in silenzio, e le revisioni dell'utente diranno quale dei due ha ragione."""
     fase("verifica")
-    passa_a(a.modello_verifica, a.modello)
     s = Segnalazioni(a)
     da_verificare = {(q.numero, cat): sospetti_di(a, q, cat)
                      for q in a.inquadrature for cat in a.categorie if cat != "sguardi"}
+    if any(da_verificare.values()):
+        passa_a(a.modello_verifica, a.modello)
     # Quante chiamate servono al massimo (quelle non ancora fatte): la barra avanza a ogni chiamata. Il
     # conteggio è per eccesso, perché ci si ferma al primo sospetto accettato; le seconde opinioni si
     # aggiungono quando se ne conosce il numero.
@@ -612,6 +627,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     signal.signal(signal.SIGHUP, lambda *_: sys.exit(129))
     coordinamento.sorveglia_app()
+    tieni_sveglio()
     if progresso.registro.dati["origine"] == "terminale":
         coordinamento.notifica(f"Analisi avviata da Terminale: {a.video.name}. La vedi e la puoi fermare dall'app.")
 
@@ -627,7 +643,8 @@ def main() -> None:
     rileva_volti(a)
     # Ora i sospetti di OWLv2 sono noti: la stima delle verifiche diventa molto più precisa.
     piano(verifica=stima_verifiche(a, len(esami)))
-    prepara_modelli(a)
+    if a.categorie - {"sguardi"}:  # gli sguardi da soli non usano i modelli di Ollama
+        prepara_modelli(a)
     esamina_fotogrammi(a, esami)
     concludi(a, verifica_sospetti(a))
 

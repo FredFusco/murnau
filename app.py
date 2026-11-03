@@ -31,7 +31,7 @@ import pulizia
 import rilevatori
 import sessioni
 from archivi import scrivi_json
-from lavoro import LAVORO, comando
+from lavoro import LAVORO, analizzabile, comando
 from sessioni import (DATI, RUOLI, _lavoro, aggiungi_materiali, assegna, carica_progetto, cartella_lavoro,
                       materiali_di, nome_per_file, salva_progetto, togli_materiale)
 
@@ -275,6 +275,7 @@ class Gestore(BaseHTTPRequestHandler):
                     if LAVORO.occupa(corpo["id"]):
                         raise RuntimeError("Questa sessione ha un'analisi in corso: fermala prima di eliminarla.")
                     esito = sessioni.elimina_sessione(corpo["id"], bool(corpo.get("risultati")))
+                    LAVORO.togli_dalla_coda(corpo["id"])
                     self._json({"ok": True, "progetto": carica_progetto(), **esito})
                     return
                 elif azione == "salva":
@@ -307,14 +308,21 @@ class Gestore(BaseHTTPRequestHandler):
                     salva_progetto(p)
                 self._json({"progetto": p})
             elif url.path == "/api/avvia":
-                if not p.get("video"):
-                    raise RuntimeError("Scegli prima il film da analizzare.")
-                if not Path(p["video"]).exists():
-                    raise RuntimeError("Il film non si trova più: trascinalo di nuovo nei materiali.")
-                if not p.get("categorie"):
-                    raise RuntimeError("Scegli almeno un tipo di errore da cercare.")
-                LAVORO.avvia(comando(p), p["id"])
+                analizzabile(p)
+                LAVORO.avvia(comando(p), p["id"], p.get("nome", ""))
                 self._json({"ok": True})
+            elif url.path == "/api/coda":
+                azione = corpo.get("azione")
+                if azione == "aggiungi":
+                    LAVORO.metti_in_coda(p)
+                elif azione == "togli":
+                    LAVORO.togli_dalla_coda(corpo["id"])
+                elif azione == "avvia":
+                    LAVORO.avvia_coda()
+                else:
+                    self.send_error(404)
+                    return
+                self._json({"ok": True, "coda": LAVORO.elenco_coda()})
             elif url.path == "/api/ferma":
                 LAVORO.ferma()
                 self._json({"ok": True})
@@ -500,6 +508,9 @@ def crea_menu() -> list:
         Menu("Analisi", [
             MenuAction("Analizza il film", _js("analizza")),
             MenuAction("Ferma", _js("ferma")),
+            MenuSeparator(),
+            MenuAction("Metti in coda", _js("metti-in-coda")),
+            MenuAction("Avvia la coda", _js("avvia-coda")),
         ]),
         Menu("Aiuto", [
             MenuAction("Guida di Murnau", apri_aiuto),

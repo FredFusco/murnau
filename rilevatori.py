@@ -38,6 +38,7 @@ MODELLO_PREDEFINITO = MODELLO_ESAME
 # Cambia quando cambiano le domande fatte ai modelli o le ricerche di OWLv2: i risultati archiviati con
 # domande diverse non si riusano (vedi murnau.Analisi.archivi).
 VERSIONE_DOMANDE = 2
+VERSIONE_SGUARDI = 2   # cambia quando cambia la misura dello sguardo
 MODELLO_OGGETTI = "google/owlv2-base-patch16-ensemble"
 CARTELLA_MODELLI = Path.home() / "Library" / "Application Support" / "Murnau" / "modelli"
 # I modelli di Hugging Face di Murnau stanno qui e non nella cache comune (~/.cache/huggingface):
@@ -76,10 +77,27 @@ SOGLIA_OGGETTI = 0.19     # punteggio minimo OWLv2: basso apposta, la verifica s
 ALTEZZA_VOLTO = 0.07      # volti più piccoli (frazione dell'altezza) sono troppo lontani per lo sguardo
 FRONTALITA = 0.36         # distanza tra gli occhi / larghezza del volto: sopra è frontale
 SCARTO_NASO = 0.25        # spostamento del naso dal centro degli occhi, rispetto alla loro distanza
-# Gradi tra lo sguardo e l'obiettivo sotto cui si segnala lo sguardo in macchina. Severa apposta: con 8°
-# 18 segnalazioni su 20 erano attori che guardavano il partner appena accanto alla macchina da presa.
+# Gradi tra lo sguardo e l'obiettivo sotto cui si segnala lo sguardo in macchina. La misura oscilla di
+# qualche grado anche per pochi pixel di differenza: per questo si prende la mediana su ritagli appena
+# diversi (MOSSE_SGUARDO). Anche così, sui volti grandi non distingue il protagonista che guarda il partner
+# appena accanto alla macchina (18 falsi allarmi su 20 nel rullo di prova) da chi guarda nell'obiettivo:
+# quelli si segnalano solo entro 2° e sempre «da controllare». Sulle comparse, i volti piccoli sullo
+# sfondo, uno sguardo verso l'obiettivo è quasi sempre un errore: lì la soglia è larga.
 SOGLIA_SGUARDO = 2.0
-SGUARDO_CERTO = 1.0       # sotto questa soglia la certezza è alta
+SOGLIA_SGUARDO_COMPARSE = 10.0
+VOLTO_PICCOLO = 0.10      # altezza del volto (frazione del fotogramma) sotto cui è di una comparsa
+SGUARDO_CERTO = 4.0       # comparse sotto questa soglia: certezza alta
+# (spostamento orizzontale, verticale, scala) dei ritagli del volto su cui si misura lo sguardo.
+MOSSE_SGUARDO = [(0, 0, 1), (.04, 0, 1), (-.04, 0, 1), (0, .04, 1), (0, -.04, 1), (0, 0, 1.08), (0, 0, .92)]
+
+
+def comparsa(riquadro: list) -> bool:
+    return riquadro[3] - riquadro[1] < VOLTO_PICCOLO
+
+
+def soglia_sguardo(riquadro: list) -> float:
+    """Gradi massimi per segnalare lo sguardo di quel volto: larga per le comparse, severa per gli altri."""
+    return SOGLIA_SGUARDO_COMPARSE if comparsa(riquadro) else SOGLIA_SGUARDO
 
 
 # --------------------------------------------------------------------------
@@ -181,6 +199,17 @@ class Volti:
             angoli.append(float((e / e.sum() * np.arange(90)).sum() * 4 - 180))
         return tuple(angoli)
 
+    def _ritagli(self, img, x, y, bw, bh) -> list:
+        h, w = img.shape[:2]
+        ritagli = []
+        for dx, dy, scala in MOSSE_SGUARDO:
+            cx, cy = x + bw / 2 + dx * bw, y + bh / 2 + dy * bh
+            a0, b0 = int(max(0, cx - bw * scala / 2)), int(max(0, cy - bh * scala / 2))
+            a1, b1 = int(min(w, cx + bw * scala / 2)), int(min(h, cy + bh * scala / 2))
+            if a1 > a0 and b1 > b0:
+                ritagli.append(img[b0:b1, a0:a1])
+        return ritagli
+
     def frontali(self, percorso: Path) -> list:
         """Volti rivolti verso la macchina da presa: [{riquadro (0-1), frontalita, angolo, orizzontale, verticale}].
 
@@ -208,6 +237,11 @@ class Volti:
             if volto.size == 0:
                 continue
             orizzontale, verticale = self._angoli(volto)
+            if np.hypot(orizzontale, verticale) <= SOGLIA_SGUARDO_COMPARSE + 4:
+                # Vicino alla soglia: mediana su ritagli appena spostati, la misura singola oscilla troppo.
+                misure = [self._angoli(r) for r in self._ritagli(img, x, y, bw, bh)]
+                orizzontale = float(np.median([m[0] for m in misure]))
+                verticale = float(np.median([m[1] for m in misure]))
             risultato.append({"riquadro": [round(max(0, x) / w, 4), round(max(0, y) / h, 4),
                                            round(min(w, x + bw) / w, 4), round(min(h, y + bh) / h, 4)],
                               "frontalita": round(frontalita - scarto, 3),

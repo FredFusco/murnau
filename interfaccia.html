@@ -122,6 +122,13 @@ body.trascinando .zona { border-color: var(--accento); border-style: dashed; bac
 .precisione input { accent-color: var(--accento); }
 .precisione small { display: block; color: var(--tenue); margin-left: 22px; }
 .azioni { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.coda { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--linea); }
+.coda h3 { margin: 0 0 6px; font-size: 14px; }
+.coda ol { margin: 0 0 10px; padding-left: 22px; }
+.coda li { margin: 3px 0; }
+.coda li small { color: var(--tenue); }
+.coda li button { margin-left: 8px; border: none; background: none; color: var(--tenue); cursor: pointer; font-size: 13px; }
+.coda li.corrente { font-weight: 600; }
 .avviso { color: var(--avviso); }
 .errore { color: var(--accento); }
 /* avanzamento */
@@ -164,6 +171,8 @@ select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid 
 .controlli select { font-size: 12.5px; padding: 3px 6px; }
 .spazio { flex: 1; }
 .riepilogo { color: var(--tenue); margin: 0 0 14px; }
+.scheda.selezionata { outline: 2px solid var(--accento); outline-offset: 2px; }
+.tasti kbd { font: 11.5px ui-monospace, Menlo, monospace; border: 1px solid var(--linea); border-radius: 4px; padding: 0 4px; }
 .scheda { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr) minmax(0, 1.9fr); gap: 14px; background: var(--pannello);
   border: 1px solid var(--linea); border-left: 5px solid var(--c); border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: var(--ombra); }
 .scheda.falso { opacity: .45; }
@@ -321,7 +330,16 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
     <div class="azioni">
       <button class="bottone principale" id="avvia" data-comando="analizza">Analizza il film</button>
       <button class="bottone" id="ferma" hidden>Ferma</button>
+      <button class="bottone" id="metti-in-coda" title="Per analizzare più sessioni (per esempio i rulli) una dopo l'altra, anche di notte">Metti in coda</button>
       <span id="esito-avvio" class="errore"></span>
+    </div>
+    <div class="coda" id="coda" hidden>
+      <h3>Coda</h3>
+      <ol id="elenco-coda"></ol>
+      <div class="azioni">
+        <button class="bottone" id="avvia-coda">Avvia la coda</button>
+        <span class="sottotitolo" id="stato-coda"></span>
+      </div>
     </div>
     <div class="complessivo" id="complessivo" hidden>
       <div class="percentuale" id="perc-totale">0%</div>
@@ -345,6 +363,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
     </select>
   </div>
   <p class="riepilogo" id="riepilogo"></p>
+  <p class="sottotitolo tasti">Con la tastiera: <kbd>↑</kbd> <kbd>↓</kbd> (o <kbd>K</kbd> <kbd>J</kbd>) per scorrere, <kbd>C</kbd> errore confermato, <kbd>F</kbd> falso allarme, <kbd>N</kbd> nota, <kbd>Esc</kbd> per uscire dalla nota.</p>
   <div id="schede"></div>
 </section>
 
@@ -650,6 +669,38 @@ function disegnaCategorie(cat) {
     api("/api/progetto", {categorie: [...document.querySelectorAll("#categorie input:checked")].map(x => x.value)}));
 }
 
+let firmaCoda = "";
+function disegnaCoda(l) {
+  const coda = l.coda || [];
+  const giaInCoda = coda.some(x => x.id === progetto.id) || (l.in_coda && l.attivo && l.sessione === progetto.id);
+  $("#metti-in-coda").disabled = giaInCoda;
+  testo($("#metti-in-coda"), giaInCoda ? "In coda ✓" : "Metti in coda");
+  $("#coda").hidden = !coda.length && !l.in_coda;
+  $("#avvia-coda").hidden = l.attivo;
+  testo($("#stato-coda"), l.in_coda
+    ? `In corso: «${l.nome_sessione}» · ${l.fatte_in_coda} ${l.fatte_in_coda === 1 ? "finita" : "finite"}, ${coda.length} in attesa. Il Mac resta sveglio fino alla fine.`
+    : coda.length ? "Le sessioni vengono analizzate una dopo l'altra; alla fine un solo riquadro riassume com'è andata." : "");
+  const firma = JSON.stringify([coda, l.in_coda && l.attivo ? l.nome_sessione : ""]);
+  if (firma === firmaCoda) return;
+  firmaCoda = firma;
+  const righe = [];
+  if (l.in_coda && l.attivo) righe.push(`<li class="corrente">${esc(l.nome_sessione)} <small>in corso</small></li>`);
+  for (const x of coda)
+    righe.push(`<li>${esc(x.nome)} <small>${esc(x.video)}</small><button data-togli="${esc(x.id)}" title="Togli dalla coda">✕</button></li>`);
+  $("#elenco-coda").innerHTML = righe.join("");
+  document.querySelectorAll("[data-togli]").forEach(b => b.onclick = async () => {
+    await api("/api/coda", {azione: "togli", id: b.dataset.togli}); aggiorna();
+  });
+}
+$("#metti-in-coda").onclick = async () => {
+  try { testo($("#esito-avvio"), ""); await api("/api/coda", {azione: "aggiungi"}); aggiorna(); }
+  catch (e) { testo($("#esito-avvio"), e.message); }
+};
+$("#avvia-coda").onclick = async () => {
+  try { testo($("#esito-avvio"), ""); await api("/api/coda", {azione: "avvia"}); aggiorna(); }
+  catch (e) { testo($("#esito-avvio"), e.message); }
+};
+
 function disegnaLavoro(l) {
   // Il lavoro in corso riguarda la sua sessione: nelle altre si vede solo che è occupato.
   const qui = !l.sessione || l.sessione === progetto.id;
@@ -664,7 +715,12 @@ function disegnaLavoro(l) {
   $("#fasi").hidden = !iniziato;
   $("#complessivo").hidden = !iniziato;
   $("#dettagli").hidden = !iniziato;
-  if (l.attivo && !qui) testo($("#esito-avvio"), "C'è un'analisi in corso in un'altra sessione.");
+  disegnaCoda(l);
+  if (l.attivo && !qui) {
+    $("#esito-avvio").className = l.in_coda ? "sottotitolo" : "errore";
+    testo($("#esito-avvio"), l.in_coda ? `Coda in corso: sto analizzando «${l.nome_sessione}».`
+                                       : "C'è un'analisi in corso in un'altra sessione.");
+  }
   if (!iniziato) return;
   const indice = FASI.findIndex(f => f[0] === l.fase);
   const finito = l.fase === "fine";
@@ -741,7 +797,7 @@ async function aggiorna() {
     disegnaEsterne(s.esterne || []);
     esportabile = !!s.esportabili;
     disegnaFormati();
-    if (s.lavoro.esito && s.lavoro.sessione === progetto.id) mostraEsito(s.lavoro.esito);
+    if (s.lavoro.esito && (s.lavoro.esito.coda || s.lavoro.sessione === progetto.id)) mostraEsito(s.lavoro.esito);
     // Le segnalazioni si ricaricano solo quando cambiano (nuova analisi, revisione, altra sessione).
     if (s.versione !== versioneVista) { versioneVista = s.versione; caricaSegnalazioni(); }
 
@@ -779,6 +835,8 @@ async function murnauComando(nome) {
         mostraVista("analisi"); testo($("#esito-avvio"), "");
         await api("/api/avvia", {}); return aggiorna();
       case "ferma": await api("/api/ferma", {}); return aggiorna();
+      case "metti-in-coda": mostraVista("analisi"); return $("#metti-in-coda").click();
+      case "avvia-coda": mostraVista("analisi"); return $("#avvia-coda").click();
     }
   } catch (e) {
     if (nome === "report" && !$("#vista-esporta").hidden) { testo($("#esito-esporta"), e.message); $("#esito-esporta").className = "esito-esporta errore"; }
@@ -842,16 +900,19 @@ function mostraEsito(e) {
   const icone = {ok: "✓", verifica: "!", errore: "×"};
   const trovate = e.segnalazioni == null ? "" : e.segnalazioni === 0 ? " Nessuna segnalazione: non sono stati trovati errori di ripresa."
     : ` ${e.segnalazioni === 1 ? "C'è 1 segnalazione" : `Ci sono ${e.segnalazioni} segnalazioni`} da rivedere nella scheda Segnalazioni.`;
-  const sotto = {ok: "Tutto è andato a buon fine, senza errori." + trovate,
-                 verifica: "L'analisi è finita, ma ci sono cose da verificare:", errore: ""};
+  const sotto = e.coda ? {ok: "Com'è andata ogni sessione (le segnalazioni le trovi aprendo la sessione):",
+                          verifica: "Com'è andata ogni sessione (le segnalazioni le trovi aprendo la sessione):",
+                          errore: "Almeno una sessione si è interrotta per un errore. Com'è andata ognuna:"}
+    : {ok: "Tutto è andato a buon fine, senza errori." + trovate,
+       verifica: "L'analisi è finita, ma ci sono cose da verificare:", errore: ""};
   const icona = $("#esito-icona"); icona.className = "icona-esito " + e.stato; icona.textContent = icone[e.stato];
   testo($("#esito-titolo"), e.stato === "verifica" ? e.titolo + ", con cose da verificare" : e.titolo);
   testo($("#esito-sotto"), sotto[e.stato]);
   const punti = [...e.punti];
-  if (e.stato === "verifica" && trovate) punti.push(trovate.trim());
+  if (e.stato === "verifica" && trovate && !e.coda) punti.push(trovate.trim());
   $("#esito-punti").replaceChildren(...punti.map(p => crea("li", "", p)));
-  $("#esito-segnalazioni").hidden = !e.segnalazioni;
-  $("#esito-dettagli").hidden = e.stato !== "errore";
+  $("#esito-segnalazioni").hidden = !e.segnalazioni || e.coda;
+  $("#esito-dettagli").hidden = e.stato !== "errore" || e.coda;
   $("#finestra-esito").hidden = false;
   $("#esito-ok").focus();
 }
@@ -944,8 +1005,44 @@ function disegnaSegnalazioni() {
       await api("/api/rivedi", {id, nota: e.target.value});
     };
     el.querySelectorAll("img").forEach(img => img.onclick = () => { $("#lente img").src = img.src; $("#lente").hidden = false; });
+    el.addEventListener("click", () => { selezionata = id; evidenzia(false); });
   });
+  evidenzia(false);
 }
+
+/* ---------- revisione con la tastiera ---------- */
+let selezionata = null;
+const schede = () => [...document.querySelectorAll(".scheda")];
+function evidenzia(scorri) {
+  const el = schede().find(x => x.dataset.id === selezionata);
+  schede().forEach(x => x.classList.toggle("selezionata", x === el));
+  if (el && scorri) el.scrollIntoView({block: "nearest", behavior: "smooth"});
+}
+function vaiA(indice) {
+  const t = schede();
+  if (!t.length) return;
+  selezionata = t[Math.max(0, Math.min(t.length - 1, indice))].dataset.id;
+  evidenzia(true);
+}
+document.addEventListener("keydown", e => {
+  if ($("#vista-segnalazioni").hidden || !$("#finestra-esito").hidden || !$("#lente").hidden ||
+      e.metaKey || e.ctrlKey || e.altKey) return;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  const t = schede(), i = t.findIndex(x => x.dataset.id === selezionata), k = e.key.toLowerCase();
+  if (k === "arrowdown" || k === "j") { e.preventDefault(); vaiA(i + 1); }
+  else if (k === "arrowup" || k === "k") { e.preventDefault(); vaiA(i < 0 ? 0 : i - 1); }
+  else if ((k === "c" || k === "f" || k === "n") && i < 0) { e.preventDefault(); vaiA(0); }
+  else if (k === "c" || k === "f") {
+    e.preventDefault();
+    t[i].querySelector(`.giudizio button[data-stato="${k === "c" ? "confermato" : "falso"}"]`).click();
+    // Dopo il giudizio si passa alla prossima; se con il filtro attivo la scheda è sparita, la prossima è al suo posto.
+    vaiA(schede().some(x => x.dataset.id === selezionata) ? i + 1 : i);
+  }
+  else if (k === "n") { e.preventDefault(); t[i].querySelector("textarea").focus(); }
+});
 $("#filtro-stato").onchange = disegnaSegnalazioni;
 $("#lente").onclick = () => $("#lente").hidden = true;
 

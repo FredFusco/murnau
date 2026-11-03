@@ -4,7 +4,7 @@ Cerca gli errori di ripresa in un film montato e li segnala con timecode, fotogr
 
 - **Troupe o attrezzatura in campo**: boom, macchina da presa, cavalletti, stativi, luci da set, operatori
 - **Troupe nei riflessi**: specchi, vetri, finestre, occhiali, carrozzerie, superfici lucide
-- **Sguardi in macchina** di attori e comparse, solo se guardano proprio nell'obiettivo
+- **Sguardi in macchina**: soprattutto le comparse sullo sfondo che guardano verso l'obiettivo; i volti in primo piano solo come «da controllare»
 - **Microfoni lavalier** visibili sugli attori
 - **Cavi della troupe**: cavi di luci, macchina da presa o audio a terra, prolunghe, nastro da set (non le prese a muro né i cavi degli oggetti di scena, che sono arredo)
 
@@ -19,6 +19,14 @@ Il film non esce dal computer. Gli unici collegamenti a internet servono a scari
 5. Nella scheda **Segnalazioni** rivedi ogni caso con **Errore confermato** o **Falso allarme**. Se vuoi, aggiungi una nota.
 6. Nella scheda **Esporta**, la terza (⌘3, o *File › Esporta…*, ⌘E), vedi quante segnalazioni finiranno nei file; scegli i file che ti servono e la cartella, poi premi **Esporta**. I file prendono il nome della sessione: `<sessione> - marker Avid.txt`, `<sessione> - marker Resolve.edl`, `<sessione> - segnalazioni.csv`, `<sessione> - report.html`. I falsi allarmi sono esclusi. Murnau ricorda le scelte; dopo aver rivisto altre segnalazioni puoi riesportare.
 7. In Media Composer apri la finestra *Markers*, poi nel menu della finestra scegli *Import Markers* e il file `… - marker Avid.txt`: i marker compaiono sulla sequenza al timecode di ogni errore, colorati per categoria.
+
+Durante l'analisi il Mac non va in stop (lo schermo invece può spegnersi), anche se l'hai lanciata da Terminale; a batteria però la GPU rallenta e l'analisi dura circa il doppio: la scheda Analisi te lo ricorda.
+
+Nella scheda **Segnalazioni** puoi rivedere con la tastiera: <kbd>↑</kbd> <kbd>↓</kbd> (o <kbd>K</kbd> <kbd>J</kbd>) per scorrere, <kbd>C</kbd> errore confermato, <kbd>F</kbd> falso allarme (e si passa alla prossima), <kbd>N</kbd> per scrivere una nota, <kbd>Esc</kbd> per uscirne.
+
+### Coda per la notte
+
+Per analizzare più sessioni una dopo l'altra (per esempio i rulli di un film): apri ogni sessione e premi **Metti in coda** (anche nel menu *Analisi*), poi **Avvia la coda**. La coda si vede nella scheda Analisi, con la sessione in corso e quelle in attesa; ✕ toglie una sessione. Una sessione che non parte (per esempio perché il film è stato spostato) non ferma le altre. Alla fine un solo suono e un solo riquadro riassumono com'è andata ciascuna; le segnalazioni le trovi aprendo le sessioni. **Ferma** ferma anche la coda: le sessioni non ancora analizzate restano in coda.
 
 Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suono. Rilanciando, l'analisi riprende dal punto in cui si era fermata.
 
@@ -62,7 +70,7 @@ Murnau usa due modelli: **Qwen3-VL**, lo stesso di Vertov, e **Gemma 4 26B**, lo
 
 1. Estrae un fotogramma al secondo (senza le bande nere) e scarta quelli a ridosso dei tagli.
 2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, cavi e prolunghe. È veloce ma impreciso: serve solo a trovare i sospetti. Sulla GPU del Mac lavora a mezza precisione (circa tre volte più veloce, stessi sospetti) e alla fine restituisce la memoria, che serve a Qwen3-VL.
-3. **YuNet** trova i volti rivolti verso l'obiettivo e un modello dello sguardo (L2CS) misura di quanti gradi lo sguardo si discosta dall'obiettivo: si segnala solo entro 2°. Con una soglia più larga quasi tutte le segnalazioni erano attori che guardavano il partner appena accanto alla macchina, e nessuno dei 12 modelli provati sa distinguere i due casi.
+3. **YuNet** trova i volti rivolti verso l'obiettivo e un modello dello sguardo (L2CS) misura di quanti gradi lo sguardo si discosta dall'obiettivo, come mediana su sette ritagli appena diversi del volto: la misura singola oscilla di qualche grado anche per pochi pixel. Le **comparse** (volti piccoli) si segnalano fino a 10°: lì uno sguardo verso l'obiettivo è quasi sempre un errore. I **volti in primo piano** solo entro 2° e sempre come «da controllare»: sui casi rivisti nessuna soglia, e nessuno dei 12 modelli provati, distingueva chi guarda nell'obiettivo dal protagonista che guarda il partner appena accanto alla macchina.
 4. **Qwen3-VL** esamina da 1 a 4 fotogrammi per inquadratura (uno ogni 2 secondi in modalità accurata) con domande precise. In questo passaggio trova anche i riflessi.
 5. Ogni sospetto viene **verificato** da **Gemma 4** sul fotogramma con il riquadro e sul ritaglio ingrandito, scegliendo tra opzioni precise (per esempio «microfono tenuto in mano da un personaggio (di scena)» o «microfono boom»): è il programma, non il modello, a decidere quali opzioni sono errori.
 6. Ciò che Gemma 4 accetta passa dalla **seconda opinione** di Qwen3-VL. Se i due sono d'accordo è una segnalazione normale; se no resta, ma **da controllare** (certezza bassa, con la seconda opinione scritta sotto) e la trovi con il filtro *Da controllare*. Gemma è veloce ma generoso, Qwen prudente: così non sparisce niente in silenzio, e le tue revisioni diranno quale dei due ha più spesso ragione. Nei marker queste segnalazioni iniziano con «[da controllare]».
@@ -165,5 +173,5 @@ Murnau usa lo stesso ambiente Python e lo stesso Ollama già installati sul Mac 
 
 - Un riflesso minuscolo o un boom che entra per pochi fotogrammi tra due campioni può sfuggire: la modalità accurata riduce il rischio.
 - Un cavo della troupe nascosto tra gli oggetti di scena può sfuggire: Murnau cerca solo ciò che la troupe lascia, non le prese e i cavi d'arredo.
-- Uno sguardo in macchina appena di lato all'obiettivo (oltre 2°) non viene segnalato.
+- Lo sguardo in macchina di un protagonista è difficile da riconoscere: Murnau lo propone solo entro 2°, come «da controllare», e può sfuggire.
 - Uno sguardo in macchina voluto (una soggettiva, un a parte) viene segnalato come gli altri.
