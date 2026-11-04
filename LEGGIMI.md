@@ -28,6 +28,8 @@ Nella scheda **Segnalazioni** puoi rivedere con la tastiera: <kbd>↑</kbd> <kbd
 
 Per analizzare più sessioni una dopo l'altra (per esempio i rulli di un film): apri ogni sessione e premi **Metti in coda** (anche nel menu *Analisi*), poi **Avvia la coda**. La coda si vede nella scheda Analisi, con la sessione in corso e quelle in attesa; ✕ toglie una sessione. Una sessione che non parte (per esempio perché il film è stato spostato) non ferma le altre. Alla fine un solo suono e un solo riquadro riassumono com'è andata ciascuna; le segnalazioni le trovi aprendo le sessioni. **Ferma** ferma anche la coda: le sessioni non ancora analizzate restano in coda.
 
+Chiudendo Murnau compare un riquadro di conferma con **Non mostrare più**: spuntato, le volte successive l'app si chiude subito, tranne quando un'analisi è in corso. *File › Chiedi conferma prima di chiudere* lo riattiva.
+
 Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suono. Rilanciando, l'analisi riprende dal punto in cui si era fermata.
 
 ### Colori dei marker

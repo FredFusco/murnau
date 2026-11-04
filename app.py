@@ -38,6 +38,7 @@ from sessioni import (DATI, RUOLI, _lavoro, aggiungi_materiali, assegna, carica_
 CARTELLA = Path(__file__).resolve().parent
 PORTA = 8766
 REGISTRO = DATI / "murnau.log"
+FILE_PREFERENZE = DATI / "preferenze.json"
 MODELLI = list(rilevatori.MODELLI)
 TIPI_IMMAGINE = {".jpg": "image/jpeg", ".png": "image/png"}
 
@@ -478,6 +479,65 @@ def apri_aiuto():
                           background_color="#16161a", text_select=True)
 
 
+# --------------------------------------------------------------------------
+# Chiusura
+# --------------------------------------------------------------------------
+
+def leggi_preferenze() -> dict:
+    try:
+        return json.loads(FILE_PREFERENZE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def scrivi_preferenza(chiave: str, valore) -> None:
+    DATI.mkdir(parents=True, exist_ok=True)
+    scrivi_json(FILE_PREFERENZE, {**leggi_preferenze(), chiave: valore})
+
+
+def conferma_chiusura() -> bool:
+    """Il riquadro di chiusura, con il logo di Murnau (quello di pywebview mostrava l'icona di Python).
+
+    Con «Non mostrare più» Murnau poi si chiude subito. Se un'analisi è in corso chiede sempre: chiudere
+    la fermerebbe, e una coda lanciata per la notte non deve interrompersi per un clic distratto."""
+    in_corso = LAVORO.attivo()
+    if not in_corso and leggi_preferenze().get("chiudi_senza_chiedere"):
+        return True
+    import AppKit
+    AppKit.NSRunningApplication.currentApplication().activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+    avviso = AppKit.NSAlert.alloc().init()
+    icona = AppKit.NSImage.alloc().initWithContentsOfFile_(str(CARTELLA / "icona_murnau.png"))
+    if icona:
+        avviso.setIcon_(icona)
+    if in_corso:
+        avviso.setMessageText_("Chiudere Murnau e fermare l'analisi?")
+        avviso.setInformativeText_("L'analisi in corso" + (" e la coda" if LAVORO.in_coda else "") +
+                                   " verranno fermate. Rilanciandola, l'analisi riprende dal punto in cui si è "
+                                   "interrotta.")
+    else:
+        avviso.setMessageText_("Chiudere Murnau?")
+        avviso.setInformativeText_("Le sessioni sono già salvate.")
+        avviso.setShowsSuppressionButton_(True)
+        avviso.suppressionButton().setTitle_("Non mostrare più")
+    avviso.addButtonWithTitle_("Chiudi")
+    avviso.addButtonWithTitle_("Annulla")
+    chiudi = avviso.runModal() == AppKit.NSAlertFirstButtonReturn
+    if chiudi and not in_corso and avviso.suppressionButton().state() == AppKit.NSControlStateValueOn:
+        scrivi_preferenza("chiudi_senza_chiedere", True)
+    return chiudi
+
+
+def riattiva_conferma_chiusura():
+    scrivi_preferenza("chiudi_senza_chiedere", False)
+    import AppKit
+    avviso = AppKit.NSAlert.alloc().init()
+    icona = AppKit.NSImage.alloc().initWithContentsOfFile_(str(CARTELLA / "icona_murnau.png"))
+    if icona:
+        avviso.setIcon_(icona)
+    avviso.setMessageText_("Murnau chiederà di nuovo conferma prima di chiudersi.")
+    avviso.runModal()
+
+
 def apri_registro():
     subprocess.run(["open", "-a", "Console", str(REGISTRO)] if REGISTRO.exists() else ["open", str(DATI)])
 
@@ -497,6 +557,8 @@ def crea_menu() -> list:
             MenuAction("Apri il report", _js("report")),
             MenuAction("Esporta…", _js("esporta")),
             MenuAction("Mostra i file di lavoro", _js("lavoro")),
+            MenuSeparator(),
+            MenuAction("Chiedi conferma prima di chiudere", riattiva_conferma_chiusura),
         ]),
         Menu("Vista", [
             MenuAction("Analisi", _js("vista-analisi")),
@@ -606,7 +668,9 @@ def main():
     identita_mac()
     FINESTRA = webview.create_window(
         "Murnau", f"http://127.0.0.1:{PORTA}", width=1240, height=900, min_size=(760, 560),
-        background_color="#16161a", confirm_close=True, text_select=True)
+        background_color="#16161a", text_select=True)
+    # Il riquadro di chiusura è di Murnau (conferma_chiusura); restituire False annulla la chiusura.
+    FINESTRA.events.closing += lambda: None if conferma_chiusura() else False
     # Chiudendo la finestra si ferma un'eventuale analisi: si potrà riprendere.
     FINESTRA.events.closed += LAVORO.ferma
 
@@ -621,8 +685,6 @@ def main():
     webview.start(all_avvio, menu=crea_menu(), localization={
         "cocoa.menu.about": "Informazioni su", "cocoa.menu.services": "Servizi", "cocoa.menu.hide": "Nascondi",
         "cocoa.menu.hideOthers": "Nascondi altre", "cocoa.menu.showAll": "Mostra tutte", "cocoa.menu.quit": "Esci da",
-        "global.quitConfirmation": "Chiudere Murnau? Un'analisi in corso verrà fermata: rilanciandola "
-                                   "riprenderà dal punto in cui si è interrotta.",
         "global.ok": "Chiudi", "global.cancel": "Annulla", "global.quit": "Esci da Murnau",
     })
     LAVORO.ferma()
