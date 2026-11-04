@@ -72,6 +72,11 @@ class Analisi:
         self.finita = False
 
     @property
+    def zoom(self) -> bool:
+        """Zoom sul petto per i lavalier: solo in modalità accurata, raddoppia il tempo dell'esame."""
+        return self.args.accurato and "lavalier" in self.categorie
+
+    @property
     def con_oggetti(self) -> bool:
         return bool(self.categorie & CATEGORIE_OGGETTI)
 
@@ -85,6 +90,7 @@ class Analisi:
         self.oggetti = Archivio(self.lavoro / f"oggetti_v{v}.jsonl")
         self.volti = Archivio(self.lavoro / f"sguardi_v{rilevatori.VERSIONE_SGUARDI}.jsonl")
         self.esame = Archivio(self.lavoro / f"esame_{_nome_file(self.modello)}_v{v}.jsonl")
+        self.zoom_petto = Archivio(self.lavoro / f"zoom_{_nome_file(self.modello)}_v{v}.jsonl")
         self.verifiche = Archivio(self.lavoro / f"verifiche_{_nome_file(self.modello_verifica)}_v{v}.jsonl")
         self.seconde = Archivio(self.lavoro / f"seconde_{_nome_file(self.seconda_opinione or 'nessuna')}_v{v}.jsonl")
 
@@ -154,7 +160,8 @@ def prepara_inquadrature(a: Analisi) -> None:
     esami = sum(len(scegli_per_esame([None] * n, q.fine - q.inizio, args.accurato))
                 for q, n in zip(a.inquadrature, stimati))
     piano(fotogrammi=round(sum(q.fine - q.inizio for q in a.inquadrature)), **unita_dei_rilevatori(a, sum(stimati), sum(stimati)),
-          modello=0 if rilevatori.modello_caricato(a.modello) else 1, esame=esami, verifica=2 * len(a.inquadrature))
+          modello=0 if rilevatori.modello_caricato(a.modello) else 1, esame=esami,
+          **({"zoom": esami} if a.zoom else {}), verifica=2 * len(a.inquadrature))
 
 
 def inquadrature_del_montaggio(a: Analisi) -> list:
@@ -262,11 +269,19 @@ def scegli_per_esame(fotogrammi: list, durata: float, accurato: bool) -> list:
     return [fotogrammi[round(k * passo)] for k in range(n)]
 
 
+def scelti_per_esame(a: Analisi) -> list:
+    return [p for q in a.inquadrature
+            for _, p in scegli_per_esame(a.fotogrammi[q.numero], q.fine - q.inizio, a.args.accurato)]
+
+
 def da_esaminare(a: Analisi) -> list:
     """I fotogrammi che Qwen3-VL deve ancora esaminare (quelli già esaminati sono nell'archivio)."""
-    return [p for q in a.inquadrature
-            for _, p in scegli_per_esame(a.fotogrammi[q.numero], q.fine - q.inizio, a.args.accurato)
-            if f"{p.name}|{a.chiave_cat}" not in a.esame]
+    return [p for p in scelti_per_esame(a) if f"{p.name}|{a.chiave_cat}" not in a.esame]
+
+
+def da_zoomare(a: Analisi) -> list:
+    """I fotogrammi dell'esame su cui manca ancora lo zoom sul petto (vuoto se lo zoom non serve)."""
+    return [p for p in scelti_per_esame(a) if p.name not in a.zoom_petto] if a.zoom else []
 
 
 # --------------------------------------------------------------------------
@@ -343,6 +358,24 @@ def esamina_fotogrammi(a: Analisi, fotogrammi: list) -> None:
         avanzamento("esame", n, len(fotogrammi))
 
 
+def zoom_sul_petto(a: Analisi, fotogrammi: list) -> None:
+    """Un secondo esame, solo per i lavalier, sul petto ingrandito di ogni personaggio."""
+    if not fotogrammi:
+        return
+    fase("zoom")
+    for n, p in enumerate(fotogrammi, 1):
+        if p.name in a.illeggibili:
+            a.non_esaminati.append(p.name)
+        else:
+            try:
+                turno()
+                a.zoom_petto.metti(p.name, rilevatori.esamina_zoom(a.modello, p))
+            except (RuntimeError, OSError) as e:
+                print(f"{p.name} (zoom): {e}")
+                a.non_esaminati.append(p.name)
+        avanzamento("zoom", n, len(fotogrammi))
+
+
 # --------------------------------------------------------------------------
 # 6. Verifica dei sospetti
 # --------------------------------------------------------------------------
@@ -412,6 +445,8 @@ def sospetti_di(a: Analisi, q, cat: str) -> list:
     foto = a.fotogrammi[q.numero]
     sospetti = [(0, p, r["riquadro"], "esame", r["voce"]) for _, p in foto
                 for r in a.esame.get(f"{p.name}|{a.chiave_cat}", []) if r["categoria"] == cat]
+    if cat == "lavalier":
+        sospetti += [(0, p, r["riquadro"], "zoom", r["voce"]) for _, p in foto for r in a.zoom_petto.get(p.name, [])]
     if cat in CATEGORIE_OGGETTI:
         trovati = [(r["punteggio"], p, r) for _, p in foto for r in a.oggetti.get(p.name, []) if r["categoria"] == cat]
         for punteggio, p, r in sorted(trovati, key=lambda x: -x[0]):
@@ -636,17 +671,19 @@ def main() -> None:
     estrai_fotogrammi(a)
     a.archivi()
     # Lavoro esatto che resta, al netto di quanto è già stato fatto in un'esecuzione precedente.
-    esami = da_esaminare(a)
+    esami, zoom = da_esaminare(a), da_zoomare(a)
     tutti = a.tutti_i_fotogrammi()
     piano(**unita_dei_rilevatori(a, sum(p.name not in a.oggetti for p in tutti), sum(p.name not in a.volti for p in tutti)),
-          modello=0 if rilevatori.modello_caricato(a.modello) else 1, esame=len(esami), verifica=2 * len(a.inquadrature))
+          modello=0 if rilevatori.modello_caricato(a.modello) else 1, esame=len(esami),
+          **({"zoom": len(zoom)} if a.zoom else {}), verifica=2 * len(a.inquadrature))
     rileva_oggetti(a)
     rileva_volti(a)
     # Ora i sospetti di OWLv2 sono noti: la stima delle verifiche diventa molto più precisa.
-    piano(verifica=stima_verifiche(a, len(esami)))
+    piano(verifica=stima_verifiche(a, len(esami) + len(zoom)))
     if a.categorie - {"sguardi"}:  # gli sguardi da soli non usano i modelli di Ollama
         prepara_modelli(a)
     esamina_fotogrammi(a, esami)
+    zoom_sul_petto(a, zoom)
     concludi(a, verifica_sospetti(a))
 
 

@@ -453,6 +453,30 @@ class BancoDiProva(ConCartella):
         self.assertEqual(r["sguardi_veri_segnalati"], {"giusti": 1, "totale": 1})
 
 
+class ZoomSulPetto(unittest.TestCase):
+    def test_riquadri_riportati_al_fotogramma(self):
+        import cv2
+        import numpy as np
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "f000001.jpg"
+            cv2.imwrite(str(f), np.zeros((500, 1000, 3), np.uint8))
+            originali = rilevatori.petti, rilevatori.esamina
+            rilevatori.petti = lambda img: [(100, 200, 300, 400)]   # un petto di 200×200 pixel
+            rilevatori.esamina = lambda modello, immagine, categorie: [
+                {"categoria": "lavalier", "voce": "lavalier", "descrizione": "", "riquadro": [.5, .5, 1, 1]}]
+            try:
+                trovati = rilevatori.esamina_zoom("m", f)
+            finally:
+                rilevatori.petti, rilevatori.esamina = originali
+        self.assertEqual(trovati[0]["riquadro"], [0.2, 0.6, 0.3, 0.8])
+
+    def test_solo_in_modalita_accurata(self):
+        normale = murnau.Analisi(murnau.leggi_argomenti(["v.mov"]))
+        accurata = murnau.Analisi(murnau.leggi_argomenti(["v.mov", "--accurato"]))
+        senza_lavalier = murnau.Analisi(murnau.leggi_argomenti(["v.mov", "--accurato", "--categorie", "troupe"]))
+        self.assertEqual((normale.zoom, accurata.zoom, senza_lavalier.zoom), (False, True, False))
+
+
 class Report(ConCartella):
     def test_report_esportato_autonomo_e_leggero(self):
         import cv2

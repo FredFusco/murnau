@@ -363,6 +363,54 @@ def chiedi(modello: str, prompt: str, immagini: list, schema: dict, tentativi: i
             time.sleep(3)
 
 
+_YUNET = []  # il rilevatore dei volti per lo zoom, creato la prima volta che serve
+
+
+def petti(img) -> list:
+    """(x0, y0, x1, y1) in pixel del petto sotto ogni volto abbastanza grande: dove si attacca il lavalier."""
+    import cv2
+    if not _YUNET:
+        _YUNET.append(cv2.FaceDetectorYN.create(str(_modello("yunet.onnx", URL_YUNET, "il modello dei volti (YuNet)")),
+                                                "", (320, 320), 0.7))
+    h, w = img.shape[:2]
+    _YUNET[0].setInputSize((w, h))
+    _, volti = _YUNET[0].detect(img)
+    riquadri = []
+    for f in (volti if volti is not None else []):
+        x, y, bw, bh = (float(v) for v in f[:4])
+        if bh / h < ALTEZZA_VOLTO:
+            continue
+        # Sotto il mento, largo il doppio del volto: colletto, bavero, scollo e camicia.
+        x0, x1 = int(max(0, x - .6 * bw)), int(min(w, x + 1.6 * bw))
+        y0, y1 = int(min(h, y + .9 * bh)), int(min(h, y + 2.6 * bh))
+        if x1 - x0 > 20 and y1 - y0 > 20:
+            riquadri.append((x0, y0, x1, y1))
+    return riquadri
+
+
+def esamina_zoom(modello: str, fotogramma: Path) -> list:
+    """Esame dei lavalier sul petto ingrandito di ogni personaggio, con i riquadri riportati al fotogramma.
+
+    Nel fotogramma intero un lavalier è di pochi pixel: sul banco di prova l'esame normale ne vedeva 1 su
+    8, con lo zoom 4 su 8. Costa una chiamata al modello per personaggio: si fa solo in modalità accurata.
+    OSError se il fotogramma non si legge."""
+    import cv2
+    img = cv2.imread(str(fotogramma))
+    if img is None:
+        raise OSError(f"fotogramma illeggibile: {Path(fotogramma).name}")
+    h, w = img.shape[:2]
+    trovati = []
+    for x0, y0, x1, y1 in petti(img):
+        ritaglio = cv2.imencode(".jpg", img[y0:y1, x0:x1], [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+        cw, ch = x1 - x0, y1 - y0
+        for r in esamina(modello, ritaglio, {"lavalier"}):
+            a0, b0, a1, b1 = r["riquadro"] or (0, 0, 1, 1)
+            r["riquadro"] = [round((x0 + a0 * cw) / w, 4), round((y0 + b0 * ch) / h, 4),
+                             round((x0 + a1 * cw) / w, 4), round((y0 + b1 * ch) / h, 4)]
+            trovati.append(r)
+    return trovati
+
+
 # Cosa cercare nell'esame di ogni fotogramma, per categoria.
 VOCI_ESAME = {
     "troupe": [

@@ -88,7 +88,7 @@ Murnau usa due modelli: **Qwen3-VL**, lo stesso di Vertov, e **Gemma 4 26B**, lo
 1. Estrae un fotogramma al secondo (senza le bande nere) e scarta quelli a ridosso dei tagli.
 2. **OWLv2** cerca in ogni fotogramma microfoni, macchine da presa, stativi, cavi e prolunghe. È veloce ma impreciso: serve solo a trovare i sospetti. Sulla GPU del Mac lavora a mezza precisione (circa tre volte più veloce, stessi sospetti) e alla fine restituisce la memoria, che serve a Qwen3-VL.
 3. **YuNet** trova i volti rivolti verso l'obiettivo e un modello dello sguardo (L2CS) misura di quanti gradi lo sguardo si discosta dall'obiettivo, come mediana su sette ritagli appena diversi del volto: la misura singola oscilla di qualche grado anche per pochi pixel. Le **comparse** (volti piccoli) si segnalano fino a 10°: lì uno sguardo verso l'obiettivo è quasi sempre un errore. I **volti in primo piano** solo entro 2° e sempre come «da controllare»: sui casi rivisti nessuna soglia, e nessuno dei 12 modelli provati, distingueva chi guarda nell'obiettivo dal protagonista che guarda il partner appena accanto alla macchina.
-4. **Qwen3-VL** esamina da 1 a 4 fotogrammi per inquadratura (uno ogni 2 secondi in modalità accurata) con domande precise. In questo passaggio trova anche i riflessi.
+4. **Qwen3-VL** esamina da 1 a 4 fotogrammi per inquadratura (uno ogni 2 secondi in modalità accurata) con domande precise. In questo passaggio trova anche i riflessi. In **modalità accurata** esamina anche il **petto ingrandito** di ogni personaggio, solo per i lavalier: nel fotogramma intero un lavalier è di pochi pixel, e sul banco di prova l'esame normale ne vedeva 1 su 8, con lo zoom 4 su 8. Costa circa il doppio del tempo dell'esame, per questo c'è solo nella modalità accurata. Lo zoom sul pavimento (cavi) e sul bordo alto (boom) è stato provato e scartato: trovava pochissimo in più e molti falsi allarmi.
 5. Ogni sospetto viene **verificato** da **Gemma 4** sul fotogramma con il riquadro e sul ritaglio ingrandito, scegliendo tra opzioni precise (per esempio «microfono tenuto in mano da un personaggio (di scena)» o «microfono boom»): è il programma, non il modello, a decidere quali opzioni sono errori.
 6. Ciò che Gemma 4 accetta passa dalla **seconda opinione** di Qwen3-VL. Se i due sono d'accordo è una segnalazione normale; se no resta, ma **da controllare** (certezza bassa, con la seconda opinione scritta sotto) e la trovi con il filtro *Da controllare*. Gemma è veloce ma generoso, Qwen prudente: così non sparisce niente in silenzio, e le tue revisioni diranno quale dei due ha più spesso ragione. Nei marker queste segnalazioni iniziano con «[da controllare]».
 
@@ -155,7 +155,7 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 |---|---|
 | `--montaggio` | EDL CMX3600 o AAF della sequenza |
 | `--categorie` | ad esempio `troupe,riflessi,sguardi` (predefinito: tutte) |
-| `--accurato` | Qwen3-VL esamina un fotogramma ogni 2 secondi |
+| `--accurato` | Qwen3-VL esamina un fotogramma ogni 2 secondi e il petto ingrandito dei personaggi (lavalier) |
 | `--modello`, `--modello-verifica` | i modelli di Ollama per l'esame e per la verifica |
 | `--passo` | secondi tra un fotogramma e l'altro per oggetti e volti (predefinito 1) |
 | `--tc-inizio` | timecode del primo fotogramma, se il file non lo dichiara |

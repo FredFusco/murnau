@@ -324,7 +324,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
         <label><input type="radio" name="precisione" value="normale"> <b>Normale</b>
           <small>Qwen3-VL esamina 1–4 fotogrammi per inquadratura; oggetti e volti uno al secondo. Circa 3–5 ore per un lungometraggio.</small></label>
         <label><input type="radio" name="precisione" value="accurata"> <b>Accurata</b>
-          <small>Qwen3-VL esamina un fotogramma ogni 2 secondi. Trova di più ciò che compare per poco, ma richiede circa il triplo del tempo.</small></label>
+          <small>Qwen3-VL esamina un fotogramma ogni 2 secondi e ingrandisce il petto dei personaggi per i lavalier. Trova di più, ma richiede circa cinque volte il tempo.</small></label>
       </div>
       <p class="sottotitolo" style="margin-top:12px">Se fermi l'analisi o chiudi l'app, rilanciandola riprende da dove era arrivata.</p>
     </div>
@@ -458,7 +458,7 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
 
 <script>
 const FASI = [["preparazione", "Preparazione"], ["fotogrammi", "Fotogrammi"], ["oggetti", "Oggetti (OWLv2)"],
-              ["volti", "Volti e sguardi"], ["modello", "Caricamento di Qwen3-VL"], ["esame", "Esame (Qwen3-VL)"], ["verifica", "Verifica dei sospetti (Gemma 4)"]];
+              ["volti", "Volti e sguardi"], ["modello", "Caricamento di Qwen3-VL"], ["esame", "Esame (Qwen3-VL)"], ["zoom", "Zoom sul petto (lavalier)"], ["verifica", "Verifica dei sospetti (Gemma 4)"]];
 const DESCRIZIONI = {
   troupe: "Boom, macchina da presa, stativi, luci da set, operatori e troupe in campo",
   riflessi: "Troupe e attrezzatura riflesse in specchi, vetri, occhiali, carrozzerie",
@@ -753,7 +753,9 @@ function disegnaLavoro(l) {
     : c.eta == null ? "<b>Calcolo il tempo…</b>" : `mancano circa <b>${durata(c.eta)}</b>`;
   testo($("#tempo-trascorso"), l.durata ? `${finito || !l.attivo ? "durata" : "trascorsi"} ${durata(l.durata)}` : "");
   testo($("#fase-attuale"), l.attivo && nomeFase ? `fase: ${nomeFase}` : "");
+  const conZoom = l.avanzamento.zoom || (progetto.accurato && (progetto.categorie || []).includes("lavalier"));
   $("#fasi").innerHTML = FASI.map(([k, nome], i) => {
+    if (k === "zoom" && !conZoom) return "";  // lo zoom sul petto c'è solo nella modalità accurata
     const a = l.avanzamento[k];
     const fatta = finito || (indice > i && indice >= 0);
     const corrente = !finito && i === indice;
@@ -1189,7 +1191,7 @@ async function apriBanco() {
     righe.push(crea("h3", "", "Ultima prova dei modelli"));
     const nomi = {verifica_veri_segnalati: "Errori veri segnalati", verifica_veri_da_controllare: "Errori veri «da controllare»",
                   verifica_falsi_scartati: "Falsi allarmi scartati", verifica_falsi_da_controllare: "Falsi allarmi «da controllare»",
-                  esame_veri_visti: "Errori veri visti dall'esame", sguardi_veri_segnalati: "Sguardi veri segnalati",
+                  esame_veri_visti: "Errori veri visti dall'esame", esame_zoom_veri_visti: "Lavalier veri visti con lo zoom", sguardi_veri_segnalati: "Sguardi veri segnalati",
                   sguardi_falsi_scartati: "Sguardi falsi scartati"};
     for (const [chiave, nome] of Object.entries(nomi)) {
       const v = b.ultima_prova[chiave];

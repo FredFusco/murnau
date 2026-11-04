@@ -203,6 +203,8 @@ def prova(modello_esame: str, modello_verifica: str, seconda: str) -> dict:
             try:
                 risultati[c["cartella"]]["esame"] = any(x["categoria"] == c["categoria"]
                                                        for x in rilevatori.esamina(modello_esame, f, tutte))
+                if c["categoria"] == "lavalier":  # lo zoom sul petto della modalità accurata
+                    risultati[c["cartella"]]["zoom"] = bool(rilevatori.esamina_zoom(modello_esame, f))
             except RuntimeError as e:
                 risultati[c["cartella"]]["errore_modello"] = str(e)
         print(f"esame {n}/{len(tutti)}", end="\r", flush=True)
@@ -260,6 +262,8 @@ def riepilogo(risultati: list) -> dict:
         "verifica_falsi_da_controllare": conta(lambda r: r in oggetti and not r["vero"], lambda r: esito_oggetto(r) == "da controllare"),
         "esame_veri_visti": conta(lambda r: "esame" in r and r["vero"], lambda r: r["esame"]),
         "esame_falsi_ignorati": conta(lambda r: "esame" in r and not r["vero"], lambda r: not r["esame"]),
+        "esame_zoom_veri_visti": conta(lambda r: "zoom" in r and r["vero"], lambda r: r["esame"] or r["zoom"]),
+        "esame_zoom_falsi_ignorati": conta(lambda r: "zoom" in r and not r["vero"], lambda r: not (r["esame"] or r["zoom"])),
         "sguardi_veri_segnalati": conta(lambda r: r in sguardi and r["vero"], lambda r: r.get("sguardo")),
         "sguardi_falsi_scartati": conta(lambda r: r in sguardi and not r["vero"], lambda r: not r.get("sguardo")),
         "sguardi_falsi_solo_da_controllare": conta(lambda r: r in sguardi and not r["vero"], lambda r: r.get("dubbio")),
@@ -283,6 +287,8 @@ ETICHETTE = {
     "verifica_falsi_da_controllare": "Falsi allarmi finiti «da controllare»",
     "esame_veri_visti": "Errori veri visti dall'esame",
     "esame_falsi_ignorati": "Falsi allarmi ignorati dall'esame",
+    "esame_zoom_veri_visti": "Lavalier veri visti da esame + zoom sul petto",
+    "esame_zoom_falsi_ignorati": "Lavalier falsi ignorati da esame + zoom sul petto",
     "sguardi_veri_segnalati": "Sguardi veri segnalati",
     "sguardi_falsi_scartati": "Sguardi falsi scartati",
     "sguardi_falsi_solo_da_controllare": "Sguardi falsi finiti solo «da controllare»",
