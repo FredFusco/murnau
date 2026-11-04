@@ -123,7 +123,30 @@ class Revisione(ConCartella):
             f.start()
         for f in fili:
             f.join()
-        self.assertEqual(len(json.loads((self.d / "revisione.json").read_text())), 40)
+        rev = json.loads((self.d / "revisione.json").read_text())
+        self.assertEqual(len([k for k in rev if not k.startswith("impronta:")]), 40)
+
+    def test_rianalisi_non_eredita_giudizi_altrui(self):
+        """Dopo una nuova analisi, il giudizio vale solo se la segnalazione è la stessa."""
+        segnalazioni_finte(self.d, 2)
+        app.rivedi(self.d, "00000-troupe", "falso")
+        app.rivedi(self.d, "00001-troupe", "confermato")
+        dati = json.loads((self.d / "segnalazioni.json").read_text())
+        dati["segnalazioni"][0]["riquadro"] = [0.1, 0.1, 0.2, 0.2]   # stessa inquadratura, altra cosa
+        (self.d / "segnalazioni.json").write_text(json.dumps(dati))
+        _, rev = esporta.leggi(self.d)
+        self.assertNotIn("00000-troupe", rev, "un vecchio falso allarme vale per una segnalazione diversa")
+        self.assertEqual(rev["00001-troupe"], "confermato")
+
+    def test_giudizi_delle_versioni_precedenti(self):
+        """I giudizi senza impronta prendono quella della segnalazione vista dall'utente prima della nuova analisi."""
+        segnalazioni_finte(self.d, 1)
+        (self.d / "revisione.json").write_text(json.dumps({"00000-troupe": "falso"}))
+        esporta.fissa_revisione(self.d)
+        dati = json.loads((self.d / "segnalazioni.json").read_text())
+        dati["segnalazioni"][0]["tc"] = "01:00:09:00"
+        (self.d / "segnalazioni.json").write_text(json.dumps(dati))
+        self.assertNotIn("00000-troupe", esporta.leggi(self.d)[1])
 
     def test_nota_e_ripristino(self):
         segnalazioni_finte(self.d, 2)

@@ -75,7 +75,7 @@ I modelli di Murnau stanno nella sua cartella (`~/Library/Application Support/Mu
 
 ## Insieme a Vertov e Ozu
 
-Murnau usa due modelli: **Qwen3-VL**, lo stesso di Vertov, e **Gemma 4 26B**, lo stesso di Ozu, con impostazioni diverse dalle loro: se lavorano insieme, Ollama deve ricaricarli (circa 20 GB) a ogni cambio e tutto rallenta di molto. Per questo:
+Murnau usa due modelli: **Qwen3-VL**, solo suo, e **Gemma 4 26B**, lo stesso di Vertov e Ozu, con impostazioni diverse dalle loro: se lavorano insieme, Ollama deve ricaricarli (circa 20 GB) a ogni cambio e tutto rallenta di molto. Per questo:
 
 - **Precedenza a Vertov**: prima di usare il modello Murnau controlla se un'analisi di Vertov è in corso e, se sì, aspetta («In attesa: Vertov sta usando il modello») e riparte da sola. Ozu a sua volta aspetta Murnau.
 - **Una sola analisi di Murnau alla volta**: l'app non ne avvia una se ce n'è già un'altra in corso.

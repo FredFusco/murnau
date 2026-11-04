@@ -6,12 +6,14 @@ scritto dall'app) vengono escluse dai marker e dal report.
 
 import base64
 import csv
+import hashlib
 import html
 import json
 import re
 from pathlib import Path
 
 import montaggio
+from archivi import scrivi_json
 
 # Colori dei marker di Media Composer per categoria.
 COLORI_AVID = {"troupe": "red", "riflessi": "magenta", "sguardi": "yellow", "lavalier": "cyan",
@@ -20,14 +22,50 @@ COLORI_RESOLVE = {"troupe": "ResolveColorRed", "riflessi": "ResolveColorPink", "
                   "lavalier": "ResolveColorCyan", "prese_cavi": "ResolveColorBlue"}
 
 
-def leggi(out: Path) -> tuple:
-    """(dati di segnalazioni.json, revisione {id: "confermato"|"falso", "note:"+id: testo})."""
+def leggi(out: Path, grezza: bool = False) -> tuple:
+    """(dati di segnalazioni.json, revisione {id: "confermato"|"falso", "note:"+id: testo, "impronta:"+id: ...}).
+
+    Senza `grezza`, solo i giudizi che riguardano proprio queste segnalazioni (vedi attuale)."""
     dati = json.loads((out / "segnalazioni.json").read_text(encoding="utf-8"))
     try:
         revisione = json.loads((out / "revisione.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         revisione = {}
-    return dati, revisione
+    return dati, (revisione if grezza else attuale(dati, revisione))
+
+
+# I giudizi sono legati al numero dell'inquadratura e alla categoria («00044-lavalier»), che restano uguali
+# quando si rianalizza; l'impronta dice quale segnalazione l'utente ha giudicato davvero (dove e quando).
+
+def impronta(s: dict) -> str:
+    return hashlib.sha1(f"{s['categoria']}|{s.get('tc')}|{s.get('riquadro')}".encode()).hexdigest()[:12]
+
+
+def _ident(chiave: str) -> str:
+    return chiave.split(":", 1)[1] if chiave.startswith(("note:", "impronta:")) else chiave
+
+
+def attuale(dati: dict, revisione: dict) -> dict:
+    """Solo i giudizi delle segnalazioni di adesso: dopo una nuova analisi, un giudizio dato a una
+    segnalazione diversa con lo stesso numero non vale più (un vecchio «falso allarme» toglierebbe
+    dai marker un errore nuovo). I giudizi senza impronta, delle versioni precedenti, restano."""
+    impronte = {s["id"]: impronta(s) for s in dati["segnalazioni"]}
+    return {k: v for k, v in revisione.items()
+            if revisione.get("impronta:" + _ident(k)) in (None, impronte.get(_ident(k)))}
+
+
+def fissa_revisione(out: Path) -> None:
+    """Prima che una nuova analisi sostituisca le segnalazioni: i giudizi senza impronta prendono quella
+    della segnalazione che l'utente aveva davvero davanti."""
+    try:
+        dati, revisione = leggi(out, grezza=True)
+    except (OSError, ValueError):
+        return
+    impronte = {s["id"]: impronta(s) for s in dati.get("segnalazioni", [])}
+    nuove = {"impronta:" + i: impronte[i] for i in {_ident(k) for k in revisione}
+             if i in impronte and "impronta:" + i not in revisione}
+    if nuove:
+        scrivi_json(out / "revisione.json", {**revisione, **nuove})
 
 
 def valide(dati: dict, revisione: dict) -> list:

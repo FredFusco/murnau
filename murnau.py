@@ -587,6 +587,7 @@ def verifica_sospetti(a: Analisi) -> list:
 # --------------------------------------------------------------------------
 
 def concludi(a: Analisi, segnalazioni: list) -> None:
+    esporta.fissa_revisione(a.out)  # i giudizi dati alle segnalazioni di prima restano legati a quelle
     archivi.scrivi_json(a.out / "segnalazioni.json", {
         "video": str(a.video), "montaggio": str(a.args.montaggio or ""), "fps": a.fps, "tc_inizio": a.tc_inizio,
         "inquadrature": len(a.inquadrature), "categorie": sorted(a.categorie),

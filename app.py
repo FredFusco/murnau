@@ -111,7 +111,7 @@ def rivedi(out: Path, ident: str, stato: str = None, nota: str = None) -> None:
 
 
 def _rivedi(out: Path, ident: str, stato: str, nota: str) -> None:
-    _, revisione = esporta.leggi(out)
+    dati, revisione = esporta.leggi(out)
     if stato is not None:
         if stato:
             revisione[ident] = stato
@@ -122,6 +122,11 @@ def _rivedi(out: Path, ident: str, stato: str, nota: str) -> None:
             revisione["note:" + ident] = nota.strip()
         else:
             revisione.pop("note:" + ident, None)
+    s = next((x for x in dati["segnalazioni"] if x["id"] == ident), None)
+    if s and (ident in revisione or "note:" + ident in revisione):
+        revisione["impronta:" + ident] = esporta.impronta(s)  # il giudizio vale per questa segnalazione
+    else:
+        revisione.pop("impronta:" + ident, None)
     scrivi_json(out / "revisione.json", revisione)
     esporta.tutto(out)
     try:

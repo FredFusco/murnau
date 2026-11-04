@@ -70,9 +70,9 @@ def _fotogramma_pulito(cartella: Path, s: dict):
 def registra(cartella: Path, ident: str = None) -> int:
     """Aggiorna i casi di una cartella di lavoro (o solo quello di `ident`). Restituisce quanti ne ha toccati."""
     cartella = Path(cartella)
+    import esporta
     try:
-        dati = json.loads((cartella / "segnalazioni.json").read_text(encoding="utf-8"))
-        revisione = json.loads((cartella / "revisione.json").read_text(encoding="utf-8"))
+        dati, revisione = esporta.leggi(cartella)  # solo i giudizi che riguardano queste segnalazioni
     except (OSError, ValueError):
         return 0
     modelli = dati.get("modelli") or {}

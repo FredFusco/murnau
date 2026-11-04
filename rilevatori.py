@@ -30,10 +30,10 @@ OLLAMA = "http://localhost:11434"
 OLLAMA_URL = OLLAMA + "/api/chat"
 CONTESTO = 8192           # token di contesto chiesti a Ollama (deve essere lo stesso in ogni richiesta)
 TENUTA = "5m"             # quanto Ollama tiene il modello in memoria dopo l'ultima richiesta di Murnau
-MODELLO_ESAME = "qwen3-vl:30b-a3b-instruct"   # lo usa anche Vertov
-MODELLO_VERIFICA = "gemma4:26b"                 # lo usa anche Ozu
-MODELLI = {MODELLO_ESAME: "Qwen3-VL, esamina i fotogrammi (lo usa anche Vertov)",
-           MODELLO_VERIFICA: "Gemma 4, verifica i sospetti (lo usa anche Ozu)"}
+MODELLO_ESAME = "qwen3-vl:30b-a3b-instruct"   # solo di Murnau (Vertov dal 2026-11-04 usa Gemma 4)
+MODELLO_VERIFICA = "gemma4:26b"                 # lo usano anche Ozu e Vertov
+MODELLI = {MODELLO_ESAME: "Qwen3-VL, esamina i fotogrammi",
+           MODELLO_VERIFICA: "Gemma 4, verifica i sospetti (lo usano anche Ozu e Vertov)"}
 MODELLO_PREDEFINITO = MODELLO_ESAME
 # Cambia quando cambiano le domande fatte ai modelli o le ricerche di OWLv2: i risultati archiviati con
 # domande diverse non si riusano (vedi murnau.Analisi.archivi).

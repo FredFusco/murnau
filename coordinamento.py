@@ -5,7 +5,7 @@
   l'app vede anche le analisi partite fuori da lei, e nessuna resta accesa per ore di nascosto.
 - Sorveglianza: un'analisi lanciata dall'app si spegne da sola se l'app non c'è più (chiusa,
   forzata, andata in crash).
-- Turni sul modello: Vertov, Murnau e Ozu usano lo stesso Qwen3-VL con contesti diversi, e
+- Turni sul modello: Vertov, Murnau e Ozu usano lo stesso Gemma 4 con contesti diversi, e
   Ollama lo ricarica (20 GB) ogni volta che il contesto cambia. Murnau lascia il modello a
   Vertov finché un'analisi di Vertov è in corso; Ozu a sua volta aspetta Murnau.
 - Memoria: a fine analisi Murnau toglie il modello dalla memoria, se è la copia caricata da
