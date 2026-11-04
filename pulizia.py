@@ -58,12 +58,14 @@ FAMIGLIA = Path(__file__).resolve().parent.parent
 def modelli_protetti() -> set:
     """I modelli di Ollama usati da Murnau e dalle app sorelle: Libera spazio non li propone mai.
 
-    Quelli delle altre app si leggono dal loro codice (righe come MODELLO = "gemma4:26b"), così una
+    Quelli delle altre app si leggono dal loro codice (righe come MODELLO = "gemma4:26b" o REVISORE = "qwen3.8:27b-dflash2-nvfp4"), così una
     scelta nuova di Vertov o di Ozu è protetta senza dover cambiare Murnau."""
     protetti = set(rilevatori.MODELLI)
     for f in FAMIGLIA.glob("*/*.py"):
         try:
-            protetti |= set(re.findall(r'^\s*MODELLO\w* *= *"([\w.:/-]+:[\w.:-]+)"', f.read_text(errors="ignore"), re.M))
+            # Ogni costante che nomina un modello (MODELLO, REVISORE di Ozu...), non gli indirizzi.
+            protetti |= {n for n in re.findall(r'^\s*[A-Z][A-Z0-9_]* *= *"([\w.:/-]+:[\w.:-]+)"',
+                                               f.read_text(errors="ignore"), re.M) if "//" not in n}
         except OSError:
             pass
     return protetti
