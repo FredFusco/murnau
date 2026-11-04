@@ -555,7 +555,8 @@ def concludi(a: Analisi, segnalazioni: list) -> None:
     archivi.scrivi_json(a.out / "segnalazioni.json", {
         "video": str(a.video), "montaggio": str(a.args.montaggio or ""), "fps": a.fps, "tc_inizio": a.tc_inizio,
         "inquadrature": len(a.inquadrature), "categorie": sorted(a.categorie),
-        "creato": time.strftime("%Y-%m-%d %H:%M"), "segnalazioni": segnalazioni})
+        "creato": time.strftime("%Y-%m-%d %H:%M"), "segnalazioni": segnalazioni,
+        "modelli": {"esame": a.modello, "verifica": a.modello_verifica, "seconda_opinione": a.seconda_opinione}})
     esporta.tutto(a.out)
     if a.illeggibili:
         avviso(f"{quanti(len(a.illeggibili), 'fotogramma non si è potuto leggere ed è stato saltato', 'fotogrammi non si sono potuti leggere e sono stati saltati')}"

@@ -17,6 +17,7 @@ CARTELLA = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CARTELLA))
 
 import app  # noqa: E402
+import banco  # noqa: E402
 import esporta  # noqa: E402
 import lavoro  # noqa: E402
 import montaggio  # noqa: E402
@@ -36,10 +37,14 @@ class ConCartella(unittest.TestCase):
         sessioni.FILE_CORRENTE = self.d / "sessione_corrente.json"
         sessioni.FILE_VECCHIO = self.d / "progetto.json"
         sessioni.FILE_DI_LAVORO = self.d / "Murnau – file di lavoro"
+        # Le revisioni dei test non devono finire nel banco di prova vero.
+        self._banco = (banco.CASI, banco.PROVE)
+        banco.CASI, banco.PROVE = self.d / "banco" / "casi", self.d / "banco" / "prove"
 
     def tearDown(self):
         for k, v in self._originali.items():
             setattr(sessioni, k, v)
+        banco.CASI, banco.PROVE = self._banco
         shutil.rmtree(self.d, ignore_errors=True)
 
 
@@ -410,6 +415,42 @@ class SguardiComparse(unittest.TestCase):
         comparsa, protagonista = [0.1, 0.1, 0.15, 0.17], [0.3, 0.1, 0.6, 0.5]
         self.assertEqual(rilevatori.soglia_sguardo(comparsa), rilevatori.SOGLIA_SGUARDO_COMPARSE)
         self.assertEqual(rilevatori.soglia_sguardo(protagonista), rilevatori.SOGLIA_SGUARDO)
+
+
+class BancoDiProva(ConCartella):
+    """Le segnalazioni rivedute diventano casi del banco; le statistiche dicono chi aveva ragione."""
+
+    def test_revisioni_e_statistiche(self):
+        lavoro = self.d / "lavoro_sessione"
+        segn = segnalazioni_finte(lavoro, 3)
+        dati = json.loads((lavoro / "segnalazioni.json").read_text())
+        dati["segnalazioni"][1]["da_controllare"] = True
+        dati["segnalazioni"][2]["da_controllare"] = True
+        (lavoro / "segnalazioni.json").write_text(json.dumps(dati))
+        app.rivedi(lavoro, segn[0]["id"], "confermato")
+        app.rivedi(lavoro, segn[1]["id"], "confermato")   # da controllare, era un errore: ragione a Gemma
+        app.rivedi(lavoro, segn[2]["id"], "falso")        # da controllare, era falso: ragione a Qwen3-VL
+        s = banco.statistiche()
+        self.assertEqual(s["casi"], 3)
+        self.assertEqual(s["da_controllare"], {"gemma": 1, "qwen": 1})
+        self.assertEqual(s["concordi"], {"giusti": 1, "sbagliati": 0})
+        app.rivedi(lavoro, segn[2]["id"], "")             # revisione tolta: il caso esce dal banco
+        self.assertEqual(banco.statistiche()["casi"], 2)
+        shutil.rmtree(lavoro)                             # la sessione sparisce, il banco resta
+        self.assertEqual(banco.statistiche()["casi"], 2)
+        self.assertTrue(all((Path(c["cartella"]) / "dettaglio.jpg").exists() for c in banco.casi()))
+
+    def test_riepilogo_della_prova(self):
+        r = banco.riepilogo([
+            {"categoria": "troupe", "vero": True, "verifica": True, "seconda": True, "esame": True},
+            {"categoria": "troupe", "vero": True, "verifica": True, "seconda": False, "esame": False},
+            {"categoria": "troupe", "vero": False, "verifica": False, "esame": False},
+            {"categoria": "sguardi", "vero": True, "sguardo": True, "dubbio": False}])
+        self.assertEqual(r["verifica_veri_segnalati"], {"giusti": 1, "totale": 2})
+        self.assertEqual(r["verifica_veri_da_controllare"], {"giusti": 1, "totale": 2})
+        self.assertEqual(r["verifica_falsi_scartati"], {"giusti": 1, "totale": 1})
+        self.assertEqual(r["esame_veri_visti"], {"giusti": 1, "totale": 2})
+        self.assertEqual(r["sguardi_veri_segnalati"], {"giusti": 1, "totale": 1})
 
 
 class Report(ConCartella):

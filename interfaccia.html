@@ -196,6 +196,9 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
 .troupe { --c: var(--c-troupe); } .riflessi { --c: var(--c-riflessi); } .sguardi { --c: var(--c-sguardi); }
 .lavalier { --c: var(--c-lavalier); } .prese_cavi { --c: var(--c-prese_cavi); }
 /* finestre di dialogo */
+.voce-banco { display: flex; justify-content: space-between; gap: 16px; margin: 4px 0; padding: 4px 0; border-bottom: 1px solid var(--linea); }
+.voce-banco b { white-space: nowrap; }
+#banco-corpo h3 { font-size: 14px; margin: 14px 0 6px; }
 .velo { position: fixed; inset: 0; background: rgba(10, 10, 14, .55); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .foglio { background: var(--pannello); border: 1px solid var(--linea); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); width: min(580px, 100%); max-height: 100%; display: flex; flex-direction: column; }
 .foglio-testa { padding: 18px 22px 4px; border-bottom: 1px solid var(--linea); }
@@ -403,6 +406,19 @@ textarea { width: 100%; min-height: 44px; resize: vertical; padding: 6px 8px; bo
 </div>
 
 <!-- Libera spazio -->
+<div class="velo" id="finestra-banco" hidden role="dialog" aria-modal="true" aria-labelledby="titolo-banco">
+  <div class="foglio">
+    <div class="foglio-testa">
+      <h2 id="titolo-banco">Banco di prova</h2>
+      <p class="spiega">Ogni segnalazione che segni come errore confermato o falso allarme viene conservata qui, sul Mac,
+        anche se poi elimini la sessione. Serve a misurare i modelli prima di cambiarli e a capire chi ha ragione
+        sulle segnalazioni «da controllare».</p>
+    </div>
+    <div class="foglio-corpo" id="banco-corpo"></div>
+    <div class="foglio-piede"><button class="bottone principale" id="banco-chiudi">Chiudi</button></div>
+  </div>
+</div>
+
 <div class="velo" id="finestra-pulizia" hidden role="dialog" aria-modal="true" aria-labelledby="titolo-pulizia">
   <div class="foglio">
     <div class="foglio-testa">
@@ -832,6 +848,7 @@ async function murnauComando(nome) {
       case "dettagli": mostraVista("analisi"); $("#dettagli").open = true; return;
       case "aggiornamenti": return cercaAggiornamenti(true);
       case "pulizia": return apriPulizia();
+      case "banco": return apriBanco();
       case "analizza":
         mostraVista("analisi"); testo($("#esito-avvio"), "");
         await api("/api/avvia", {}); return aggiorna();
@@ -1147,6 +1164,43 @@ function peso(byte) {
   return Math.max(1, Math.round(byte / 1024)) + " KB";
 }
 let vociPulizia = [];
+async function apriBanco() {
+  $("#finestra-banco").hidden = false;
+  const corpo = $("#banco-corpo");
+  corpo.replaceChildren(crea("p", "spiega", "Raccolgo le revisioni…"));
+  let b;
+  try { b = await api("/api/banco"); } catch (e) { corpo.replaceChildren(crea("p", "errore", e.message)); return; }
+  const righe = [];
+  const riga = (a, c) => { const p = crea("p", "voce-banco"); p.append(crea("span", "", a), crea("b", "", c)); righe.push(p); };
+  if (!b.casi) {
+    corpo.replaceChildren(crea("p", "spiega", "Il banco è ancora vuoto: nella scheda Segnalazioni segna qualche errore confermato o falso allarme."));
+    return;
+  }
+  righe.push(crea("h3", "", `${b.casi} segnalazioni rivedute · ${b.veri} errori confermati`));
+  for (const c of Object.values(b.per_categoria)) riga(c.titolo, `${c.veri} confermati · ${c.falsi} falsi allarmi`);
+  righe.push(crea("h3", "", "Le «da controllare»: chi aveva ragione?"));
+  const d = b.da_controllare, k = b.concordi;
+  if (d.gemma + d.qwen) {
+    riga("Gemma 4 (era un errore)", d.gemma);
+    riga("Qwen3-VL (era un falso allarme)", d.qwen);
+  } else righe.push(crea("p", "spiega", "Non hai ancora rivisto segnalazioni «da controllare» (ci sono dalla versione 1.0.5)."));
+  if (k.giusti + k.sbagliati) riga("Quando erano d'accordo", `${k.giusti} errori veri · ${k.sbagliati} falsi allarmi`);
+  if (b.ultima_prova) {
+    righe.push(crea("h3", "", "Ultima prova dei modelli"));
+    const nomi = {verifica_veri_segnalati: "Errori veri segnalati", verifica_veri_da_controllare: "Errori veri «da controllare»",
+                  verifica_falsi_scartati: "Falsi allarmi scartati", verifica_falsi_da_controllare: "Falsi allarmi «da controllare»",
+                  esame_veri_visti: "Errori veri visti dall'esame", sguardi_veri_segnalati: "Sguardi veri segnalati",
+                  sguardi_falsi_scartati: "Sguardi falsi scartati"};
+    for (const [chiave, nome] of Object.entries(nomi)) {
+      const v = b.ultima_prova[chiave];
+      if (v && v.totale) riga(nome, `${v.giusti} su ${v.totale}`);
+    }
+  }
+  righe.push(crea("p", "spiega", `Occupa ${(b.byte / 2 ** 20).toFixed(1)} MB in ${b.cartella}. «Libera spazio» non lo tocca.`));
+  corpo.replaceChildren(...righe);
+}
+$("#banco-chiudi").onclick = () => $("#finestra-banco").hidden = true;
+
 async function apriPulizia() {
   $("#finestra-pulizia").hidden = false;
   testo($("#pulizia-totale"), "Misuro lo spazio occupato…");
@@ -1190,6 +1244,7 @@ document.addEventListener("keydown", e => {
   $("#lente").hidden = true;
   if (!$("#finestra-aggiornamenti").hidden) chiudiAggiornamenti();
   if (!$("#finestra-pulizia").hidden) chiudiPulizia();
+  $("#finestra-banco").hidden = true;
   $("#elenco-sessioni").hidden = true;
 });
 

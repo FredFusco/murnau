@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import aggiornamenti
+import banco
 import coordinamento
 import esporta
 import pulizia
@@ -123,6 +124,10 @@ def _rivedi(out: Path, ident: str, stato: str, nota: str) -> None:
             revisione.pop("note:" + ident, None)
     scrivi_json(out / "revisione.json", revisione)
     esporta.tutto(out)
+    try:
+        banco.registra(out, ident)  # ogni giudizio diventa (o smette di essere) un caso del banco di prova
+    except OSError as e:
+        print(f"Banco di prova non aggiornato: {e}")
 
 
 # Cosa si può esportare: file nella cartella di lavoro e come si chiama, una volta esportato,
@@ -241,6 +246,8 @@ class Gestore(BaseHTTPRequestHandler):
                         "automatico": aggiornamenti.leggi_stato().get("automatico", True)})
         elif url.path == "/api/pulizia":
             self._json({"voci": pulizia.voci()})
+        elif url.path == "/api/banco":
+            self._json(banco.statistiche())
         elif url.path == "/file":
             # Solo le immagini dentro la cartella di lavoro.
             relativo = parse_qs(url.query).get("p", [""])[0]
@@ -579,6 +586,7 @@ def crea_menu() -> list:
             MenuSeparator(),
             MenuAction("Cerca aggiornamenti…", _js("aggiornamenti")),
             MenuAction("Libera spazio…", _js("pulizia")),
+            MenuAction("Banco di prova…", _js("banco")),
             MenuSeparator(),
             MenuAction("Apri il registro di Murnau", apri_registro),
         ]),
@@ -665,6 +673,7 @@ def main():
     # i file lasciati dalle versioni precedenti nelle cartelle dei risultati vanno nelle cartelle di lavoro.
     sessioni.trasloca_tutte()
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=banco.aggiorna_tutto, daemon=True).start()  # le revisioni già fatte
     identita_mac()
     FINESTRA = webview.create_window(
         "Murnau", f"http://127.0.0.1:{PORTA}", width=1240, height=900, min_size=(760, 560),

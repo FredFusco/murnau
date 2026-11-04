@@ -42,6 +42,21 @@ Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suo
 | Microfono lavalier | ciano |
 | Cavi della troupe | blu |
 
+## Banco di prova
+
+Ogni segnalazione che segni come **Errore confermato** o **Falso allarme** diventa un caso del banco di prova: le sue immagini (fotogramma con il riquadro, dettaglio e, se si ritrova negli archivi dell'analisi, il fotogramma pulito) e il tuo giudizio. Il banco sta in `~/Library/Application Support/Murnau/banco`, sul Mac e mai su GitHub, e resta anche se elimini la sessione; *Libera spazio* non lo tocca. Se togli il giudizio, il caso esce dal banco.
+
+*Aiuto › Banco di prova…* mostra quante segnalazioni hai rivisto per categoria e, per quelle *da controllare*, quante volte aveva ragione Gemma 4 (era un errore) e quante Qwen3-VL (era un falso allarme), più il risultato dell'ultima prova dei modelli.
+
+La prova rifà su tutti i casi la verifica a due livelli, l'esame del fotogramma pulito e la misura dello sguardo, e confronta con i tuoi giudizi. Si lancia da Terminale, anche con modelli diversi, prima di cambiare un modello o le domande:
+
+```bash
+~/.venvs/descrittore/bin/python banco.py prova
+~/.venvs/descrittore/bin/python banco.py prova --seconda qwen3.8:27b-dflash2-nvfp4
+```
+
+Il risultato resta in `banco/prove/` e l'ultimo compare nella finestra del banco. Come le analisi, la prova dà la precedenza a Vertov.
+
 ## Sessioni
 
 Ogni lavoro è una **sessione**: film, montaggio, opzioni, cartella di lavoro e cartella in cui esportare, salvati da soli a ogni modifica. In alto a destra:
@@ -158,6 +173,7 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 | `montaggio.py`, `aaf.py` | EDL, AAF, timecode, tagli e bande nere |
 | `esporta.py` | marker per Avid e Resolve, foglio di calcolo, report |
 | `archivi.py`, `progresso.py` | scrittura sicura dei file; righe `@@` dell'avanzamento |
+| `banco.py` | banco di prova: le tue revisioni, le statistiche e la prova dei modelli |
 | `coordinamento.py` | convivenza con Vertov e Ozu, analisi lanciate da Terminale |
 | `aggiornamenti.py`, `pulizia.py` | aggiornamenti e Libera spazio |
 
