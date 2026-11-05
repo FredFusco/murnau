@@ -4,6 +4,7 @@
 """
 
 import json
+import os
 import shutil
 import socket
 import sys
@@ -312,19 +313,170 @@ class ModelliSenzaSchema(unittest.TestCase):
 
 class ModelliDelleAltreApp(unittest.TestCase):
     def test_libera_spazio_non_tocca_i_modelli_di_vertov_e_ozu(self):
+        """I modelli delle app sorelle si leggono sia dai sorgenti in My Drive/CLAUDE sia dai programmi
+        dentro le app installate in ~/Applications."""
         import pulizia
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "ozu").mkdir()
-            (Path(d) / "ozu" / "motore.py").write_text('MODELLO = "gemma9:12b"\n')
-            (Path(d) / "vertov").mkdir()
-            (Path(d) / "vertov" / "app.py").write_text('    MODELLO_DESCRIZIONI = "qwen9-vl:30b"\nx = "altro:1b"\n')
-            originale, pulizia.FAMIGLIA = pulizia.FAMIGLIA, Path(d)
+            sorgenti, applicazioni = Path(d) / "CLAUDE", Path(d) / "Applications"
+            (sorgenti / "ozu").mkdir(parents=True)
+            (sorgenti / "ozu" / "motore.py").write_text('MODELLO = "gemma9:12b"\nREVISORE = "qwen9.8:27b"\n')
+            programma = applicazioni / "Vertov.app" / "Contents" / "Resources" / "programma"
+            programma.mkdir(parents=True)
+            (programma / "modello.py").write_text('    MODELLO_DESCRIZIONI = "gemma9:26b"\nx = "altro:1b"\n'
+                                                  'INDIRIZZO = "http://localhost:11434"\n')
+            originali = pulizia.CODICE_FAMIGLIA, pulizia.APP_INSTALLATE
+            pulizia.CODICE_FAMIGLIA, pulizia.APP_INSTALLATE = sorgenti, applicazioni
             try:
                 protetti = pulizia.modelli_protetti()
             finally:
-                pulizia.FAMIGLIA = originale
-        self.assertTrue({"gemma9:12b", "qwen9-vl:30b", *rilevatori.MODELLI} <= protetti)
+                pulizia.CODICE_FAMIGLIA, pulizia.APP_INSTALLATE = originali
+        self.assertTrue({"gemma9:12b", "qwen9.8:27b", "gemma9:26b", *rilevatori.MODELLI} <= protetti)
         self.assertNotIn("altro:1b", protetti)
+        self.assertFalse(any("localhost" in m for m in protetti))
+
+
+class ProcessiDelleAppSorelle(unittest.TestCase):
+    """Le analisi delle app si riconoscono dal nome del file, con o senza percorso: ora girano da dentro le app."""
+
+    def test_con_e_senza_percorso(self):
+        import coordinamento as c
+        app = "/Users/x/Applications/Vertov.app/Contents/Resources/programma/descrivi.py"
+        self.assertTrue(c._esegue(f"/opt/python -u {app} film.mov --out y", "descrivi.py"))
+        self.assertTrue(c._esegue("python -u descrivi.py film.mov", "descrivi.py"))
+        self.assertTrue(c._esegue("python /Users/x/My Drive/CLAUDE/vertov/descrivi.py", "descrivi.py"))
+        self.assertTrue(c._esegue("python -W ignore /Users/x/Applications/Murnau.app/Contents/Resources/programma/"
+                                  "murnau.py /film.mov --out /lavoro", c.PROGRAMMA))
+        self.assertFalse(c._esegue("python ridescrivi.py", "descrivi.py"))
+        self.assertFalse(c._esegue("python app.py --servizio", c.PROGRAMMA))
+        self.assertFalse(c._esegue("python murnau.pyc", c.PROGRAMMA))
+
+
+class SceltaDeiFile(unittest.TestCase):
+    def test_percorsi_dalla_finestra_nativa(self):
+        self.assertEqual(app.scegli("file", True, {"percorsi": ["/a/film.mov", "/a/m.aaf"]}), ["/a/film.mov", "/a/m.aaf"])
+        self.assertEqual(app.scegli("cartella", False, {"percorsi": ["/a/esporta/"]}), "/a/esporta")
+        self.assertIsNone(app.scegli("file", True, {"percorsi": []}))  # annullata
+
+    def test_in_servizio_senza_percorsi(self):
+        originale, app.SERVIZIO = app.SERVIZIO, True
+        try:
+            with self.assertRaises(RuntimeError):
+                app.scegli("file", True, {})
+        finally:
+            app.SERVIZIO = originale
+
+
+class Servizio(unittest.TestCase):
+    """app.py --servizio: solo il server, con dati e sessioni in una casa finta (mai quelle vere)."""
+
+    def _avvia(self, casa):
+        import subprocess
+        return subprocess.Popen([sys.executable, "-W", "ignore", str(CARTELLA / "app.py"), "--servizio"], cwd=CARTELLA,
+                                env={**os.environ, "HOME": str(casa), "PYTHONDONTWRITEBYTECODE": "1"},
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def test_porta_occupata(self):
+        occupata = socket.socket()
+        try:
+            occupata.bind(("127.0.0.1", app.PORTA))
+            occupata.listen(1)
+        except OSError:
+            occupata.close()  # la occupa qualcun altro, che potrebbe liberarla a metà prova
+            self.skipTest("la porta di Murnau è occupata (Murnau è aperto)")
+        p = None
+        try:
+            with tempfile.TemporaryDirectory() as casa:
+                p = self._avvia(casa)
+                self.assertEqual(p.wait(timeout=60), app.CODICE_PORTA_OCCUPATA)
+        finally:
+            occupata.close()
+            if p is not None and p.poll() is None:
+                p.kill()
+
+    def test_risponde_e_si_ferma(self):
+        import signal
+        import urllib.request
+        prova = socket.socket()
+        try:
+            prova.bind(("127.0.0.1", app.PORTA))
+        except OSError:
+            self.skipTest("la porta di Murnau è occupata (Murnau è aperto)")
+        finally:
+            prova.close()
+        with tempfile.TemporaryDirectory() as casa:
+            p = self._avvia(casa)
+            try:
+                limite = time.time() + 60
+                while True:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{app.PORTA}/api/sessioni", timeout=1) as r:
+                            self.assertEqual(r.status, 200)
+                        break
+                    except OSError:
+                        self.assertLess(time.time(), limite, "il server non risponde")
+                        self.assertIsNone(p.poll(), p.stdout.read() if p.poll() is not None else "")
+                        time.sleep(0.2)
+                p.send_signal(signal.SIGTERM)
+                self.assertEqual(p.wait(timeout=10), 0)
+                self.assertTrue((Path(casa) / "Library" / "Application Support" / "Murnau" / "sessioni").exists(),
+                                "le sessioni non sono nella casa finta")
+            finally:
+                if p.poll() is None:
+                    p.kill()
+
+
+class ScambioDellApp(unittest.TestCase):
+    """Un aggiornamento scambia Murnau.app intera con quella del pacchetto; la vecchia va in versioni_precedenti."""
+
+    def test_zip_finto(self):
+        import zipfile
+        import aggiornamenti as ag
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            installata = d / "Applications" / "Murnau.app"
+            (installata / "Contents" / "MacOS").mkdir(parents=True)
+            (installata / "Contents" / "MacOS" / "Murnau").write_text("vecchia")
+            pacchetto = d / "murnau.zip"
+            with zipfile.ZipFile(pacchetto, "w") as z:
+                eseguibile = zipfile.ZipInfo("Murnau.app/Contents/MacOS/Murnau")
+                eseguibile.external_attr = 0o755 << 16
+                z.writestr(eseguibile, "nuova")
+                z.writestr("Murnau.app/Contents/Resources/programma/app.py", "# programma")
+            originali = ag.APP, ag.PRECEDENTI
+            ag.APP, ag.PRECEDENTI = installata, d / "versioni_precedenti"
+            try:
+                ag.scambia_app(pacchetto, d / "estratti")
+            finally:
+                ag.APP, ag.PRECEDENTI = originali
+            nuova = installata / "Contents" / "MacOS" / "Murnau"
+            self.assertEqual(nuova.read_text(), "nuova")
+            self.assertTrue(os.access(nuova, os.X_OK), "l'eseguibile ha perso i permessi")
+            self.assertEqual((d / "versioni_precedenti" / ag.versione() / "Murnau.app" / "Contents" / "MacOS" / "Murnau")
+                             .read_text(), "vecchia")
+            self.assertFalse((d / "Applications" / ".Murnau.app.nuova").exists())
+
+    def test_pacchetto_sbagliato(self):
+        import zipfile
+        import aggiornamenti as ag
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            pacchetto = d / "murnau.zip"
+            with zipfile.ZipFile(pacchetto, "w") as z:
+                z.writestr("altro/file.txt", "x")
+            originali = ag.APP
+            ag.APP = d / "Murnau.app"
+            try:
+                with self.assertRaises(RuntimeError):
+                    ag.scambia_app(pacchetto, d / "estratti")
+            finally:
+                ag.APP = originali
+
+    def test_dal_codice_sorgente_non_si_installa(self):
+        import aggiornamenti as ag
+        self.assertIsNone(ag.APP)  # i test girano dal codice sorgente
+        with self.assertRaises(RuntimeError) as e:
+            ag._installa_app({"nuova": "9.9.9", "pacchetto": "https://x/y.zip", "sha256": "0"})
+        self.assertIn("compila.sh --installa", str(e.exception))
 
 
 class BandeNere(unittest.TestCase):

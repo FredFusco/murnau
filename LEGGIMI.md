@@ -10,9 +10,19 @@ Cerca gli errori di ripresa in un film montato e li segnala con timecode, fotogr
 
 Il film non esce dal computer. Gli unici collegamenti a internet servono a scaricare i modelli la prima volta e a controllare se ne esistono versioni nuove. Il controllo legge soltanto il numero di versione pubblicato e non invia nulla del film.
 
+## L'app
+
+Murnau è un'app del Mac: sta nella cartella Applicazioni dell'utente (`~/Applications/Murnau.app`), la trovi con Spotlight e Launchpad e la puoi tenere nel Dock. Questa cartella contiene solo il codice sorgente, da cui si costruisce e si installa l'app con `mac/compila.sh --installa`.
+
+**Murnau.app è un'app nativa per Mac** (Swift, sorgente in `mac/Murnau.swift`, si compila con `mac/compila.sh`; bastano gli strumenti da riga di comando di Xcode). Si apre subito con il logo e «Avvio di Murnau…», ha menu e scorciatoie native (con *Murnau › Impostazioni…* ⌘,), finestre di scelta dei file del Mac, la percentuale dell'analisi sull'icona nel Dock, la conferma dell'uscita con il logo di Murnau, ricorda posizione e misura della finestra e riceve film, montaggi e cartelle trascinati sulla finestra o sull'icona nel Dock, o aperti dal Finder con *Apri con › Murnau* (Murnau non diventa l'app predefinita per quei file). Il motore resta in Python: l'app avvia `app.py --servizio`, cioè solo il server dell'interfaccia, e lo ferma all'uscita (nessun processo resta acceso); se il motore si ferma da solo, l'app propone di riavviarlo. Dopo un aggiornamento il server esce con il codice 75 e l'app si chiude e si riapre senza chiedere. `python app.py` senza `--servizio` apre ancora la finestra di pywebview, come prima: resta come ripiego e per il Terminale.
+
+**Murnau.app è completa:** dentro, in `Contents/Resources/programma`, c'è tutto il programma (i file che `.gitignore` ammette); fuori restano solo l'ambiente Python (`~/.venvs/descrittore`, condiviso con Vertov), i dati (`~/Library/Application Support/Murnau`, con sessioni, file di lavoro e banco di prova), le cache dei modelli e Ollama. `mac/compila.sh` la costruisce in `~/Library/Caches/Murnau/` (fuori da Drive, perché Spotlight non la trovi due volte) e con `--installa` la mette in `~/Applications`, scambiandola con quella che c'è. Il motore gira con `PYTHONDONTWRITEBYTECODE=1`, così non scrive file dentro l'app e la firma resta valida. Al primo avvio su un Mac nuovo Murnau prepara da sé l'ambiente Python (PyTorch, OpenCV, Transformers, pywebview, pyaaf2): ci vuole qualche minuto.
+
+L'app e il motore scrivono nello stesso registro, `~/Library/Application Support/Murnau/murnau.log` (*Aiuto › Apri il registro di Murnau*).
+
 ## Come si usa
 
-1. Apri **Murnau.app**.
+1. Apri **Murnau** (dalla cartella Applicazioni, da Spotlight o dal Dock).
 2. Trascina nella finestra lo scarico del film (`.mov`, `.mxf`, `.mp4`) e, se puoi, l'**EDL** o l'**AAF** della sequenza, anche insieme o in una cartella: Murnau li riconosce e li mette nei riquadri **Film** e **Montaggio**, con durata, fps, risoluzione e timecode o numero di eventi. Con il montaggio i tagli sono esatti e ogni segnalazione riporta la clip sorgente (con l'AAF anche scena, inquadratura e ciak dal bin). Se un file finisce nel riquadro sbagliato, usa **Usa come…** o **Togli**.
 3. Scegli cosa cercare e la precisione, poi premi **Analizza il film**.
 4. A fine lavoro, insieme al suono, compare un **riquadro con l'esito**: tutto a posto, cose da verificare (con l'elenco) o un errore che ha interrotto l'analisi (con il motivo in parole semplici; il testo tecnico resta in *Dettagli dell'elaborazione*). Resta finché non premi **OK**, anche se ricarichi la pagina.
@@ -28,7 +38,7 @@ Nella scheda **Segnalazioni** puoi rivedere con la tastiera: <kbd>↑</kbd> <kbd
 
 Per analizzare più sessioni una dopo l'altra (per esempio i rulli di un film): apri ogni sessione e premi **Metti in coda** (anche nel menu *Analisi*), poi **Avvia la coda**. La coda si vede nella scheda Analisi, con la sessione in corso e quelle in attesa; ✕ toglie una sessione. Una sessione che non parte (per esempio perché il film è stato spostato) non ferma le altre. Alla fine un solo suono e un solo riquadro riassumono com'è andata ciascuna; le segnalazioni le trovi aprendo le sessioni. **Ferma** ferma anche la coda: le sessioni non ancora analizzate restano in coda.
 
-Chiudendo Murnau compare un riquadro di conferma con **Non mostrare più**: spuntato, le volte successive l'app si chiude subito, tranne quando un'analisi è in corso. *File › Chiedi conferma prima di chiudere* lo riattiva.
+Chiudendo Murnau compare un riquadro di conferma con **Non mostrare più**: spuntato, le volte successive l'app si chiude subito, tranne quando un'analisi è in corso. *Murnau › Impostazioni…* (⌘,) lo riattiva.
 
 Se premi **Ferma** o chiudi l'app non è un errore: niente riquadro e niente suono. Rilanciando, l'analisi riprende dal punto in cui si era fermata.
 
@@ -111,7 +121,7 @@ Su M5 Max servono circa 0,05 secondi a fotogramma per gli oggetti, 0,08 per i vo
 
 ## File di lavoro ed esportazioni
 
-Murnau non scrive niente nella tua cartella finché non esporti. I file con cui lavora stanno dentro la cartella di Murnau, in `Murnau – file di lavoro/`, una cartella per sessione con lo stesso nome della sessione. La vedi con **Mostra** in Materiali o *File › Mostra i file di lavoro*. Git, il pacchetto degli aggiornamenti e l'installazione degli aggiornamenti la ignorano, quindi non finisce mai su GitHub e un aggiornamento non la tocca; se sposti o rinomini la cartella di Murnau, le sessioni ritrovano i loro file:
+Murnau non scrive niente nella tua cartella finché non esporti. I file con cui lavora stanno con gli altri dati di Murnau, in `~/Library/Application Support/Murnau/file di lavoro/`, una cartella per sessione con lo stesso nome della sessione. La vedi con **Mostra** in Materiali o *File › Mostra i file di lavoro*. Non stanno mai dentro Murnau.app (che non cambia mentre gira) né nella cartella del codice, quindi non finiscono su GitHub e un aggiornamento non li tocca:
 
 - `segnalazioni.json` e `revisione.json`: le segnalazioni e le tue revisioni
 - `segnalazioni/`: fotogrammi e dettagli delle segnalazioni
@@ -120,7 +130,7 @@ Murnau non scrive niente nella tua cartella finché non esporti. I file con cui 
 
 Nella cartella in cui esporti (all'inizio quella del film) finiscono solo i file scelti in **Esporta**. Il report esportato contiene anche le immagini, quindi si apre e si invia da solo.
 
-All'avvio Murnau porta dentro la propria cartella le cartelle di lavoro create altrove dalle versioni precedenti (in `My Drive/CLAUDE` o in Application Support), e sposta nella cartella di lavoro i file che le versioni ancora più vecchie lasciavano nella cartella dei risultati: li sposta, non li cancella, e non tocca mai il film, il montaggio o i file di Vertov (anche il suo `marker_resolve.edl`, che inizia con «TITLE: Descrizioni inquadrature» invece che con «TITLE: Murnau»).
+All'avvio Murnau porta nella cartella dei file di lavoro le cartelle create altrove dalle versioni precedenti (fino alla 1.0.9 stavano nella cartella del codice, in `Murnau – file di lavoro/`), e sposta nella cartella di lavoro i file che le versioni ancora più vecchie lasciavano nella cartella dei risultati: li sposta, non li cancella, e non tocca mai il film, il montaggio o i file di Vertov (anche il suo `marker_resolve.edl`, che inizia con «TITLE: Descrizioni inquadrature» invece che con «TITLE: Murnau»).
 
 ## Aggiornamenti
 
@@ -131,7 +141,9 @@ All'avvio, al massimo una volta al giorno, Murnau controlla se ci sono versioni 
 - le **librerie Python** (condivise con Vertov: dopo l'aggiornamento si verifica che funzionino per entrambe le app, altrimenti si torna alle versioni di prima);
 - i modelli **Qwen3-VL**, **Gemma 4** e **OWLv2**.
 
-Se ne trova, mostra l'elenco e chiede cosa installare: **Aggiorna**, **Più tardi** o **Salta questa versione**. Il controllo automatico si può spegnere (**Controlla all'avvio**) e si può sempre lanciare a mano con **Aggiornamenti…** o dal menu Aiuto. Durante un'analisi non si aggiorna. I file sostituiti dagli aggiornamenti dell'app vengono conservati, per poter tornare indietro.
+Se ne trova, mostra l'elenco e chiede cosa installare: **Aggiorna**, **Più tardi** o **Salta questa versione**. Il controllo automatico si può spegnere (**Controlla all'avvio**, anche in *Impostazioni*) e si può sempre lanciare a mano con **Aggiornamenti…** o dal menu Aiuto. Durante un'analisi non si aggiorna.
+
+Un aggiornamento di Murnau scarica Murnau.app nuova completa, la prepara accanto a quella installata e le scambia: il Murnau aperto continua a girare fino al riavvio, che avviene da solo. La versione di prima va in `~/Library/Application Support/Murnau/versioni_precedenti/`, per poter tornare indietro. Dal codice sorgente gli aggiornamenti di Murnau non si installano: lì si usano git e `mac/compila.sh --installa`.
 
 ## Pubblicare una nuova versione
 
@@ -141,7 +153,7 @@ Il codice è su GitHub in [FredFusco/murnau](https://github.com/FredFusco/murnau
 ~/.venvs/descrittore/bin/python prepara_aggiornamento.py 1.1.0 "Novità uno" "Novità due" --pubblica
 ```
 
-Crea il pacchetto e l'annuncio in `dist/` e li carica come release: le copie di Murnau li vedono al controllo successivo, con le novità elencate.
+Scrive VERSIONE, costruisce Murnau.app con `mac/compila.sh`, crea in `dist/` il pacchetto (lo zip con dentro l'app completa) e l'annuncio e li carica come release: le copie di Murnau li vedono al controllo successivo, con le novità elencate. Per avere la versione nuova anche su questo Mac: `mac/compila.sh --installa`.
 
 ## Da riga di comando
 
@@ -165,7 +177,8 @@ Da riga di comando `--out` è la cartella di lavoro: lì finiscono tutti i file 
 
 | File | Cosa contiene |
 |---|---|
-| `app.py` | la finestra, i menu e il piccolo server interno che serve l'interfaccia (`interfaccia.html`) |
+| `mac/Murnau.swift`, `mac/compila.sh`, `mac/Info.plist` | l'app nativa per Mac, il suo costruttore e la sua scheda (tipi di file per *Apri con*) |
+| `app.py` | il piccolo server interno che serve l'interfaccia (`interfaccia.html`); senza `--servizio` anche una finestra di ripiego con pywebview |
 | `sessioni.py` | sessioni, materiali e cartelle di lavoro |
 | `lavoro.py` | l'analisi lanciata dall'app: avanzamento, percentuale, tempo restante, esito |
 | `murnau.py` | l'analisi vera e propria, divisa in fasi |

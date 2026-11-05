@@ -25,10 +25,13 @@ from pathlib import Path
 DATI = Path.home() / "Library" / "Application Support" / "Murnau"
 LAVORI = DATI / "lavori"
 OLLAMA = "http://localhost:11434"
-VARIABILE_GENITORE = "MURNAU_APP"   # pid dell'app che ha lanciato l'analisi
-# Programmi di analisi delle altre app che usano il modello (vedi i loro app.py).
-ALTRI_PROGRAMMI = {"Vertov": "vertov/descrivi.py"}
-PROGRAMMA = "murnau/murnau.py"
+VARIABILE_GENITORE = "MURNAU_APP_PID"   # pid del server dell'app che ha lanciato l'analisi
+# (MURNAU_APP invece è il percorso di Murnau.app, che il server usa per riaprirla dopo un aggiornamento)
+# Programmi di analisi delle altre app che usano il modello. Si riconoscono dal nome del file, con o senza
+# percorso: ora girano da dentro le app (~/Applications/Vertov.app/Contents/Resources/programma/descrivi.py),
+# dal codice sorgente (vertov/descrivi.py) o dalla loro cartella (descrivi.py).
+ALTRI_PROGRAMMI = {"Vertov": "descrivi.py"}
+PROGRAMMA = "murnau.py"
 
 
 def _processi() -> list:
@@ -49,8 +52,9 @@ def _processi() -> list:
 
 
 def _esegue(riga: str, programma: str) -> bool:
-    # Python che esegue proprio quel programma, non uno che ne nomina il percorso in un argomento.
-    return re.search(re.escape(programma) + r"(\s|$)", riga) is not None
+    """Python che esegue proprio quel programma: il nome del file come argomento a sé, con o senza percorso
+    («descrivi.py», «…/programma/descrivi.py»), non un nome che lo contiene («ridescrivi.py»)."""
+    return re.search(r"(^|\s|/)" + re.escape(programma) + r"(\s|$)", riga) is not None
 
 
 def altre_app_al_lavoro() -> list:

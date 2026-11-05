@@ -12,7 +12,10 @@
 !aggiornamenti.json
 !icona_murnau.png
 !icona/icona_murnau.svg
-!Murnau.app/**
+!mac/Murnau.swift
+!mac/compila.sh
+!mac/Info.plist
+!mac/murnau.icns
 # Mai, nemmeno se dentro ci fossero file ammessi:
 Murnau – file di lavoro/
 prova_risultati/

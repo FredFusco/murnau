@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Murnau: l'app.
 
-Apre una finestra propria (pywebview, WebKit di macOS) con l'interfaccia, servita
-da un piccolo server interno raggiungibile solo da questo computer. Fa scegliere
+Il server dell'interfaccia, raggiungibile solo da questo computer. Con --servizio parte solo il server:
+la finestra, i menu e le finestre di scelta dei file li fa Murnau.app (mac/Murnau.swift). Senza
+--servizio apre anche una finestra propria con pywebview, come ripiego e per il Terminale. Fa scegliere
 il film e il montaggio, lancia l'analisi (murnau.py), ne mostra l'avanzamento
 e permette di rivedere le segnalazioni una per una ed esportare i marker.
 Ogni lavoro è una sessione salvata, che si può riaprire in seguito. I file con cui Murnau
 lavora stanno in una cartella di lavoro per sessione; nella cartella scelta dall'utente
 finisce solo ciò che esporta.
 
-    ~/.venvs/descrittore/bin/python app.py
+    ~/.venvs/descrittore/bin/python app.py              # con la finestra di pywebview
+    ~/.venvs/descrittore/bin/python app.py --servizio   # solo il server, per Murnau.app
 """
 
 import json
@@ -18,6 +20,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +45,9 @@ REGISTRO = DATI / "murnau.log"
 FILE_PREFERENZE = DATI / "preferenze.json"
 MODELLI = list(rilevatori.MODELLI)
 TIPI_IMMAGINE = {".jpg": "image/jpeg", ".png": "image/png"}
+CODICE_RIAVVIO = 75  # dopo un aggiornamento: l'app si chiude senza chiedere e si riapre da sola
+CODICE_PORTA_OCCUPATA = 3  # un altro Murnau ha già il server aperto
+SERVIZIO = False  # True con --servizio: niente finestra di pywebview, la fa Murnau.app
 
 
 # --------------------------------------------------------------------------
@@ -181,8 +187,16 @@ def _esporta_file(p: dict, formati: list, lavoro: Path) -> list:
 FINESTRA = None  # la finestra dell'app, per le finestre di scelta dei file
 
 
-def scegli(tipo: str, multipli: bool = False):
-    """Finestra di scelta nativa: un percorso, una lista (multipli) o None se annullata."""
+def scegli(tipo: str, multipli: bool = False, dati: dict = None):
+    """Finestra di scelta nativa: un percorso, una lista (multipli) o None se annullata. Con Murnau.app la
+    finestra la apre l'app, che manda i percorsi scelti nella richiesta («percorsi», vuoto se annullata)."""
+    if dati is not None and "percorsi" in dati:
+        scelti = [str(x).rstrip("/") for x in dati["percorsi"] if x]
+        if not scelti:
+            return None
+        return scelti if multipli else scelti[0]
+    if SERVIZIO:
+        raise RuntimeError("La finestra di scelta la apre Murnau.app: aggiorna l'interfaccia e riprova.")
     import webview
     dialogo = getattr(webview, "FileDialog", None)
     if dialogo:
@@ -253,6 +267,9 @@ class Gestore(BaseHTTPRequestHandler):
             self._json({"voci": pulizia.voci()})
         elif url.path == "/api/banco":
             self._json(banco.statistiche())
+        elif url.path == "/api/preferenze":
+            self._json({"chiudi_senza_chiedere": bool(leggi_preferenze().get("chiudi_senza_chiedere")),
+                        "automatico": aggiornamenti.leggi_stato().get("automatico", True)})
         elif url.path == "/file":
             # Solo le immagini dentro la cartella di lavoro.
             relativo = parse_qs(url.query).get("p", [""])[0]
@@ -299,7 +316,7 @@ class Gestore(BaseHTTPRequestHandler):
                 self._json({"ok": True, "progetto": p})
             elif url.path == "/api/sfoglia":
                 # Finestra di scelta: i file scelti vengono riconosciuti come quelli trascinati.
-                scelti = scegli(corpo.get("tipo", "file"), multipli=True)
+                scelti = scegli(corpo.get("tipo", "file"), multipli=True, dati=corpo)
                 if not scelti:
                     self._json({"esiti": [], "progetto": p})
                     return
@@ -315,7 +332,7 @@ class Gestore(BaseHTTPRequestHandler):
                 salva_progetto(p)
                 self._json({"ok": True, "progetto": p})
             elif url.path == "/api/cartella-esporta":
-                scelto = scegli("cartella")
+                scelto = scegli("cartella", dati=corpo)
                 if scelto:
                     p["out"] = scelto
                     salva_progetto(p)
@@ -371,7 +388,11 @@ class Gestore(BaseHTTPRequestHandler):
                 elif azione == "riavvia":
                     self._json({"ok": True})
                     aggiornamenti.riavvia(PORTA)
-                    threading.Timer(0.3, FINESTRA.destroy).start()
+                    if SERVIZIO:
+                        # Murnau.app vede il codice 75 e si chiude senza chiedere; riavvia() la riapre.
+                        threading.Timer(0.3, lambda: (LAVORO.ferma(), os._exit(CODICE_RIAVVIO))).start()
+                    else:
+                        threading.Timer(0.3, FINESTRA.destroy).start()
                 else:
                     self.send_error(404)
             elif url.path == "/api/pulizia":
@@ -408,6 +429,11 @@ class Gestore(BaseHTTPRequestHandler):
                 p["esportati"] = sorted(set(p.get("esportati", [])) | set(creati))
                 salva_progetto(p)
                 self._json({"ok": True, "creati": creati, "cartella": p["out"]})
+            elif url.path == "/api/preferenze":
+                # Le stesse preferenze che legge Murnau.app (la conferma alla chiusura è sua).
+                if "chiudi_senza_chiedere" in corpo:
+                    scrivi_preferenza("chiudi_senza_chiedere", bool(corpo["chiudi_senza_chiedere"]))
+                self._json({"ok": True})
             elif url.path == "/api/esito-visto":
                 LAVORO.esito = None
                 self._json({"ok": True})
@@ -539,17 +565,6 @@ def conferma_chiusura() -> bool:
     return chiudi
 
 
-def riattiva_conferma_chiusura():
-    scrivi_preferenza("chiudi_senza_chiedere", False)
-    import AppKit
-    avviso = AppKit.NSAlert.alloc().init()
-    icona = AppKit.NSImage.alloc().initWithContentsOfFile_(str(CARTELLA / "icona_murnau.png"))
-    if icona:
-        avviso.setIcon_(icona)
-    avviso.setMessageText_("Murnau chiederà di nuovo conferma prima di chiudersi.")
-    avviso.runModal()
-
-
 def apri_registro():
     subprocess.run(["open", "-a", "Console", str(REGISTRO)] if REGISTRO.exists() else ["open", str(DATI)])
 
@@ -570,7 +585,7 @@ def crea_menu() -> list:
             MenuAction("Esporta…", _js("esporta")),
             MenuAction("Mostra i file di lavoro", _js("lavoro")),
             MenuSeparator(),
-            MenuAction("Chiedi conferma prima di chiudere", riattiva_conferma_chiusura),
+            MenuAction("Impostazioni…", _js("impostazioni")),
         ]),
         Menu("Vista", [
             MenuAction("Analisi", _js("vista-analisi")),
@@ -601,7 +616,7 @@ def crea_menu() -> list:
 # Scorciatoie da tastiera dei menu: titolo -> (tasto, maiuscole)
 SCORCIATOIE = {
     "Nuova sessione": ("n", False), "Apri sessione…": ("o", False), "Salva sessione": ("s", False),
-    "Aggiungi materiali…": ("o", True), "Esporta…": ("e", False), "Analisi": ("1", False), "Segnalazioni": ("2", False), "Esporta": ("3", False),
+    "Aggiungi materiali…": ("o", True), "Impostazioni…": (",", False), "Esporta…": ("e", False), "Analisi": ("1", False), "Segnalazioni": ("2", False), "Esporta": ("3", False),
     "Analizza il film": ("r", False), "Ferma": (".", False), "Guida di Murnau": ("?", False),
 }
 
@@ -664,8 +679,39 @@ def sistema_menu() -> None:
                 visti.add(titolo)
 
 
+def avvio_comune() -> None:
+    """Prima che qualcosa possa scrivere: le cartelle di lavoro vanno nella cartella dei file di lavoro, e
+    i file lasciati dalle versioni precedenti nelle cartelle dei risultati vanno nelle cartelle di lavoro."""
+    sessioni.trasloca_tutte()
+    threading.Thread(target=banco.aggiorna_tutto, daemon=True).start()  # le revisioni già fatte
+
+
+def servizio() -> None:
+    """Solo il server dell'interfaccia, per Murnau.app: niente pywebview. Si ferma quando Murnau.app lo chiude
+    (SIGTERM), fermando prima un'eventuale analisi (si potrà riprendere)."""
+    global SERVIZIO
+    SERVIZIO = True
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORTA), Gestore)
+    except OSError:
+        print("La porta di Murnau è già occupata: c'è un altro Murnau aperto.", flush=True)
+        sys.exit(CODICE_PORTA_OCCUPATA)
+
+    def fine(*_):
+        LAVORO.ferma()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, fine)
+    signal.signal(signal.SIGINT, fine)
+    avvio_comune()
+    print(f"Server di Murnau pronto su 127.0.0.1:{PORTA} (versione {aggiornamenti.versione()})", flush=True)
+    server.serve_forever()
+
+
 def main():
     global FINESTRA
+    if "--servizio" in sys.argv[1:]:
+        return servizio()
     import webview
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PORTA), Gestore)
@@ -674,11 +720,8 @@ def main():
         subprocess.run(["osascript", "-e", 'tell application "System Events" to set frontmost of '
                         '(first process whose name is "Murnau") to true'], capture_output=True)
         return
-    # Prima che qualcosa possa scrivere: le cartelle di lavoro vanno dentro la cartella di Murnau, e
-    # i file lasciati dalle versioni precedenti nelle cartelle dei risultati vanno nelle cartelle di lavoro.
-    sessioni.trasloca_tutte()
+    avvio_comune()
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=banco.aggiorna_tutto, daemon=True).start()  # le revisioni già fatte
     identita_mac()
     FINESTRA = webview.create_window(
         "Murnau", f"http://127.0.0.1:{PORTA}", width=1240, height=900, min_size=(760, 560),

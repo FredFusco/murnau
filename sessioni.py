@@ -28,12 +28,13 @@ FILE_VECCHIO = DATI / "progetto.json"  # prima delle sessioni
 ESTENSIONI_VIDEO = {".mov", ".mp4", ".mxf", ".m4v", ".avi", ".mkv"}
 ESTENSIONI_MONTAGGIO = {".edl", ".aaf"}
 RUOLI = {"video": "Film", "montaggio": "Montaggio"}
-# I file con cui Murnau lavora (fotogrammi, rilevamenti, segnalazioni, revisione...) stanno qui, dentro
-# la cartella di Murnau, una cartella per sessione. Nella cartella di destinazione scelta dall'utente
-# finisce solo ciò che esporta. Git, il pacchetto degli aggiornamenti e l'installazione degli
-# aggiornamenti la ignorano (vedi .gitignore e aggiornamenti.INTOCCABILI).
-NOME_FILE_DI_LAVORO = "Murnau – file di lavoro"
-FILE_DI_LAVORO = CARTELLA / NOME_FILE_DI_LAVORO
+# I file con cui Murnau lavora (fotogrammi, rilevamenti, segnalazioni, revisione...) stanno qui, con gli altri
+# dati di Murnau, una cartella per sessione. Nella cartella di destinazione scelta dall'utente finisce solo
+# ciò che esporta. Non stanno nella cartella del programma: dentro Murnau.app non si scrive mai (la firma
+# dell'app resterebbe rotta), e l'app funziona anche su un Mac senza la cartella del codice.
+FILE_DI_LAVORO = DATI / "file di lavoro"
+# Dove le versioni fino alla 1.0.9 tenevano le cartelle di lavoro: accanto al programma, nel codice sorgente.
+VECCHIO_NOME_FILE_DI_LAVORO = "Murnau – file di lavoro"
 
 
 # --------------------------------------------------------------------------
@@ -231,7 +232,7 @@ def riporta_dentro(p: dict) -> str:
     # La cartella che conteneva le cartelle di lavoro, se ora è vuota, non serve più.
     try:
         rimasti = [x for x in vecchia.parent.iterdir() if x.name != ".DS_Store"]
-        if vecchia.parent.name == NOME_FILE_DI_LAVORO and not rimasti:
+        if vecchia.parent.name == VECCHIO_NOME_FILE_DI_LAVORO and not rimasti:
             shutil.rmtree(vecchia.parent)
     except OSError:
         pass

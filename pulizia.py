@@ -51,8 +51,15 @@ def _modelli_hf_non_usati() -> list:
     return [(repo, c, _dimensione(c)) for repo, c in cartelle.items() if repo not in MODELLI_HF_USATI]
 
 
-# Le app sorelle (Vertov, Ozu...) stanno accanto alla cartella di Murnau.
-FAMIGLIA = Path(__file__).resolve().parent.parent
+# Le app sorelle (Vertov, Ozu...): il loro codice sorgente sta accanto a quello di Murnau in My Drive/CLAUDE,
+# e le app installate hanno il programma dentro, in Contents/Resources/programma.
+CODICE_FAMIGLIA = Path.home() / "My Drive" / "CLAUDE"
+APP_INSTALLATE = Path.home() / "Applications"
+
+
+def _programmi_della_famiglia():
+    yield from CODICE_FAMIGLIA.glob("*/*.py")
+    yield from APP_INSTALLATE.glob("*.app/Contents/Resources/programma/*.py")
 
 
 def modelli_protetti() -> set:
@@ -61,7 +68,7 @@ def modelli_protetti() -> set:
     Quelli delle altre app si leggono dal loro codice (righe come MODELLO = "gemma4:26b" o REVISORE = "qwen3.8:27b-dflash2-nvfp4"), così una
     scelta nuova di Vertov o di Ozu è protetta senza dover cambiare Murnau."""
     protetti = set(rilevatori.MODELLI)
-    for f in FAMIGLIA.glob("*/*.py"):
+    for f in _programmi_della_famiglia():
         try:
             # Ogni costante che nomina un modello (MODELLO, REVISORE di Ozu...), non gli indirizzi.
             protetti |= {n for n in re.findall(r'^\s*[A-Z][A-Z0-9_]* *= *"([\w.:/-]+:[\w.:-]+)"',

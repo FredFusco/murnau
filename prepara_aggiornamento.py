@@ -1,6 +1,7 @@
 """Prepara e pubblica un aggiornamento di Murnau.
 
-Crea in dist/ il pacchetto (murnau-VERSIONE.zip) e l'annuncio (murnau.json). Con
+Costruisce Murnau.app completa con mac/compila.sh (l'app nativa con dentro il programma, fuori da Drive) e crea in
+dist/ il pacchetto (murnau-VERSIONE.zip, con dentro Murnau.app) e l'annuncio (murnau.json). Con
 --pubblica li carica come release su GitHub (serve gh, con l'accesso fatto): le
 copie di Murnau li trovano all'indirizzo fisso scritto in aggiornamenti.json,
 .../releases/latest/download/murnau.json, che punta sempre all'ultima release.
@@ -19,13 +20,6 @@ from pathlib import Path
 CARTELLA = Path(__file__).resolve().parent
 
 
-def file_del_programma() -> list:
-    """Solo i file che .gitignore ammette: mai materiali, documenti o risultati di un film."""
-    r = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard"], cwd=CARTELLA,
-                       capture_output=True, text=True, check=True)
-    return sorted(f for f in r.stdout.splitlines() if f != ".gitignore" and (CARTELLA / f).is_file())
-
-
 def main() -> None:
     argomenti = [a for a in sys.argv[1:] if a != "--pubblica"]
     pubblica = "--pubblica" in sys.argv
@@ -37,11 +31,15 @@ def main() -> None:
         sys.exit("Scrivi prima in aggiornamenti.json l'indirizzo dove pubblicherai murnau.json.")
     (CARTELLA / "VERSIONE").write_text(versione + "\n")
     dist = CARTELLA / "dist"
+    subprocess.run([str(CARTELLA / "mac" / "compila.sh")], cwd=CARTELLA, check=True)
+    app = Path.home() / "Library" / "Caches" / "Murnau" / "Murnau.app"  # dove la mette mac/compila.sh
     dist.mkdir(exist_ok=True)
     pacchetto = dist / f"murnau-{versione}.zip"
+    # z.write registra anche i permessi: l'eseguibile dell'app resta eseguibile (aggiornamenti.py li rimette).
     with zipfile.ZipFile(pacchetto, "w", zipfile.ZIP_DEFLATED) as z:
-        for rel in file_del_programma():
-            z.write(CARTELLA / rel, rel)
+        for f in sorted(app.rglob("*")):
+            if f.is_file() and not f.is_symlink():
+                z.write(f, Path("Murnau.app") / f.relative_to(app))
     # Su GitHub il pacchetto si indica con l'indirizzo della sua release, non con "latest": per qualche
     # minuto dopo una pubblicazione "latest" può dare l'annuncio vecchio e il pacchetto nuovo, o viceversa.
     indirizzo = json.loads((CARTELLA / "aggiornamenti.json").read_text())["indirizzo"]
